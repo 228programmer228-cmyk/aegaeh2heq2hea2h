@@ -30,12 +30,31 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Fetch VLESS Candidates
+      - name: Prepare Embedded VLESS Candidates
         run: |
-          RAW_DATA=$(curl -sSL -A "Mozilla/5.0" https://mifa.world/vless)
-          export RAW_DATA="$RAW_DATA"
+          cat > proxies.txt <<'EOF'
+          vless://9a21263b-1af0-41ec-9d3a-2afda61606dc@78.17.76.197:47640?type=tcp&headerType=none&security=reality&encryption=none&sni=www.nvidia.com&fp=chrome&pbk=ks2xxgXE4JO2nYBdbxliHfvy5OEd6zdjE9UWNXJy4m4&sid=bec61d2ccb&spx=%2F#AE-01-MIFA
+          vless://8f59feef-aab9-4e0b-924c-2a31bb8f446f@138.124.6.159:30086?type=grpc&headerType=none&security=none&encryption=none&serviceName=gprc&mode=gun#CH-01-MIFA
+          vless://8f59feef-aab9-4e0b-924c-2a31bb8f446f@138.124.6.159:39800?type=xhttp&headerType=none&security=reality&encryption=none&sni=apple.com&fp=chrome&pbk=bpHDYJWkA0h_nOqRBLUbuJJXfqmIZIMGcv07zcFpdCs&sid=dc27d60c096413b5&path=%2F&mode=auto#CH-02-MIFA
+          vless://4e8d48bb-3c03-4e02-b15f-a76737cca9e7@de-new.shadownet.pro:8443?type=tcp&headerType=none&security=reality&encryption=none&sni=max.ru&fp=chrome&pbk=3uvHbYi6-LoPjhUs1AByrQicvYnUSQywtLLOX0DSpzM&sid=345678abcd&flow=xtls-rprx-vision#CH-03-MIFA
+          vless://4e8d48bb-3c03-4e02-b15f-a76737cca9e7@de-new.shadownet.pro:8443?type=tcp&headerType=none&security=reality&encryption=none&sni=max.ru&fp=chrome&pbk=3uvHbYi6-LoPjhUs1AByrQicvYnUSQywtLLOX0DSpzM&sid=90ab23cd12&flow=xtls-rprx-vision#CH-04-MIFA
+          vless://4b481152-ba7f-4445-8cc0-d33d58546e23@7qrbome80g.country-27.de-nfast.com:443?type=tcp&headerType=none&security=reality&encryption=none&sni=tradingview.com&fp=chrome&pbk=-tePObR3oZwGAUOb5kqTYkNWl6rtUKl0RFuzuu06wgw&sid=50&flow=xtls-rprx-vision#CH-05-MIFA
+          vless://c42a39d3-e7a1-4b87-a7f3-be7e3704c996@45.15.129.17:443?type=tcp&headerType=none&security=reality&encryption=none&sni=www.oracle.com&fp=chrome&pbk=kGW3p-dzpbVQnV8IM5T63UqRYu2MvI9Yl5K1GLJxWkY&sid=77#CY-01-MIFA
+          vless://da2d9e98-f486-43ec-8637-79089bc1f222@45.15.129.5:443?type=tcp&headerType=none&security=reality&encryption=none&sni=yandex.ru&fp=qq&pbk=tmRzdUIUtlS3-qqTIXF1FNRDn9gkIm4j1kdbb50OLC8&sid=62f140&flow=xtls-rprx-vision#CY-02-MIFA
+          vless://da2d9e98-f486-43ec-8637-79089bc1f222@45.15.129.5:443?type=tcp&headerType=none&security=reality&encryption=none&sni=yandex.ru&fp=chrome&pbk=tmRzdUIUtlS3-qqTIXF1FNRDn9gkIm4j1kdbb50OLC8&sid=62f140&flow=xtls-rprx-vision#CY-03-MIFA
+          vless://c42a39d3-e7a1-4b87-a7f3-be7e3704c996@45.15.129.17:443?type=tcp&headerType=none&security=reality&encryption=none&sni=www.oracle.com&fp=qq&pbk=kGW3p-dzpbVQnV8IM5T63UqRYu2MvI9Yl5K1GLJxWkY&sid=77#CY-04-MIFA
+          vless://3744b1fc-1fa5-4bd9-a901-d97a4214ae70@45.15.129.32:443?type=tcp&headerType=none&security=reality&encryption=none&sni=google.com&fp=chrome&pbk=qsT9UM8_tjOILuNP9skeOZ0SfXfnj1oTRG-kKoCfqXs&sid=d0#CY-05-MIFA
+          vless://3b95fcac-599b-4c55-bc26-89e63f9a1bd6@194.87.104.158:443?type=tcp&headerType=none&security=reality&encryption=none&sni=ads.x5.ru&fp=chrome&pbk=AhQkw1Ydp_ZkXnE7UbIZvwHk9KE_Bf5_TkojYZZUuGs&sid=2da46294d6a521B2&flow=xtls-rprx-vision#CZ-01-MIFA
+          vless://4e8d48bb-3c03-4e02-b15f-a76737cca9e7@myhistory.shadownet.pro:443?type=xhttp&headerType=none&security=tls&encryption=none&sni=myhistory.shadownet.pro&alpn=h2&path=%2FMyHistorySecondPart&mode=auto&insecure=0#CZ-02-MIFA
+          vless://f6808c62-cfe0-438c-aae6-44fe6ef51e47@89.163.237.48:8082?type=grpc&headerType=none&security=reality&encryption=none&sni=id.vk.com&fp=chrome&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&serviceName=vless-grpc-reality&mode=gun#DE-01-MIFA
+          vless://f6808c62-cfe0-438c-aae6-44fe6ef51e47@213.202.218.149:8082?type=grpc&headerType=none&security=reality&encryption=none&sni=id.vk.com&fp=chrome&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&serviceName=vless-grpc-reality&mode=gun#DE-02-MIFA
+          vless://f6808c62-cfe0-438c-aae6-44fe6ef51e47@89.163.154.211:8082?type=grpc&headerType=none&security=reality&encryption=none&sni=id.vk.com&fp=chrome&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&serviceName=vless-grpc-reality&mode=gun#DE-03-MIFA
+          vless://f6808c62-cfe0-438c-aae6-44fe6ef51e47@46.228.205.135:8082?type=grpc&headerType=none&security=reality&encryption=none&sni=id.vk.com&fp=chrome&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&serviceName=vless-grpc-reality&mode=gun#DE-04-MIFA
+          vless://f6808c62-cfe0-438c-aae6-44fe6ef51e47@213.202.222.225:8082?type=grpc&headerType=none&security=reality&encryption=none&sni=id.vk.com&fp=chrome&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&serviceName=vless-grpc-reality&mode=gun#DE-05-MIFA
+          vless://b6ce8a51-19b9-4979-91ba-b4298c26d5fc@152.89.244.33:443?type=tcp&headerType=none&security=tls&encryption=none&sni=finl9.keepsecured.net&alpn=http%2F1.1%2Ch2&flow=xtls-rprx-vision&insecure=0#DE-06-MIFA
+          EOF
           python3 - <<EOF
-          import base64, json, os, sys, urllib.parse
+          import json, os, sys, urllib.parse
           import ipaddress
 
           def parse_bool(value):
@@ -102,15 +121,11 @@ jobs:
               return stream
 
           try:
-              data = os.environ.get('RAW_DATA', '').strip()
-              if not data:
-                  raise RuntimeError("Proxy list is empty")
-
-              decoded = base64.b64decode(data).decode('utf-8')
-              proxies = [l.strip() for l in decoded.split('\n') if l.strip().startswith('vless://')]
+              with open("proxies.txt", "r", encoding="utf-8") as f:
+                  proxies = [l.strip() for l in f if l.strip().startswith("vless://")]
 
               if not proxies:
-                  raise RuntimeError("No vless:// links found in decoded payload")
+                  raise RuntimeError("No embedded vless:// links found")
 
               candidates = []
               seen = set()
@@ -127,12 +142,12 @@ jobs:
 
                       addr, port = host_port.rsplit(':', 1)
                       try:
-                          if ipaddress.ip_address(addr).version != 4:
+                          parsed_addr = ipaddress.ip_address(addr)
+                          if parsed_addr.version != 4:
                               continue
                       except ValueError:
-                          # For this workflow we prefer literal IPv4 endpoints only:
-                          # no domain resolution surprises, no accidental IPv6 path.
-                          continue
+                          # Domain names are allowed here; runtime checks still enforce IPv4 egress.
+                          pass
 
                       params = dict(urllib.parse.parse_qsl(p.query))
                       network = params.get("type", "tcp")
@@ -185,13 +200,7 @@ jobs:
                       }
                       candidates.append({
                           "label": f"{addr}:{port} {network} {params.get('security', 'none')}",
-                          "config": config,
-                          "priority": (
-                              0 if params.get("security") == "reality" else 1,
-                              0 if network == "tcp" else 1 if network == "grpc" else 2,
-                              addr,
-                              int(port)
-                          )
+                          "config": config
                       })
                   except Exception:
                       continue
@@ -199,14 +208,10 @@ jobs:
               if not candidates:
                   raise RuntimeError("No valid VLESS candidates could be parsed")
 
-              candidates.sort(key=lambda item: item["priority"])
-              for item in candidates:
-                  item.pop("priority", None)
-
               with open("proxy_candidates.json", "w", encoding="utf-8") as f:
                   json.dump(candidates, f)
 
-              print(f"Prepared {len(candidates)} IPv4 VLESS candidates")
+              print(f"Prepared {len(candidates)} embedded VLESS candidates")
           except Exception as e:
               print(f"Error: {e}")
               sys.exit(1)
@@ -215,8 +220,9 @@ jobs:
       - name: Setup TUN & Run
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
-          MAX_CANDIDATES: "8"
+          MAX_CANDIDATES: "20"
           MAX_WORKING_CONFIGS: "2"
+          FORCE_PROXY_INDEX: ""
         run: |
           set -euo pipefail
           export DISPLAY=:99
@@ -247,8 +253,16 @@ jobs:
           import os
           with open("proxy_candidates.json", "r", encoding="utf-8") as f:
               candidates = json.load(f)
-          limit = int(os.environ.get("MAX_CANDIDATES", "12"))
-          selected = candidates[:limit]
+          force_index = os.environ.get("FORCE_PROXY_INDEX", "").strip()
+          if force_index:
+              idx = int(force_index) - 1
+              if idx < 0 or idx >= len(candidates):
+                  raise SystemExit(f"FORCE_PROXY_INDEX={force_index} is out of range 1..{len(candidates)}")
+              selected = [candidates[idx]]
+              print(f"Forced candidate #{force_index}")
+          else:
+              limit = int(os.environ.get("MAX_CANDIDATES", "12"))
+              selected = candidates[:limit]
           print(f"Selected {len(selected)} candidates for fast scan")
           for idx, candidate in enumerate(selected, start=1):
               with open(f"xray_config_{idx}.json", "w", encoding="utf-8") as out:
@@ -320,7 +334,9 @@ jobs:
           fi
 
           CURRENT_PROXY_INDEX=0
-          ACTIVE_CFG="${WORKING_CONFIGS[$CURRENT_PROXY_INDEX]}"
+          LAST_WORKING_INDEX=$(( ${#WORKING_CONFIGS[@]} - 1 ))
+          CURRENT_PROXY_INDEX="$LAST_WORKING_INDEX"
+          ACTIVE_CFG="${WORKING_CONFIGS[$LAST_WORKING_INDEX]}"
           cp "$ACTIVE_CFG" xray_config.json
 
           restart_proxy_stack() {
@@ -436,11 +452,6 @@ jobs:
             LAST_HANDLED_DISCONNECT_LINE=0
             return 0
           }
-
-          if ! restart_proxy_stack "$ACTIVE_CFG"; then
-            echo "Failed to start active proxy stack"
-            exit 1
-          fi
 
           echo "--- IP CHECK (SHOULD BE PROXY) ---"
           sudo -u bot curl -4 --silent --show-error --fail --max-time 10 https://ifconfig.me/ip
