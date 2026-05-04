@@ -1,4 +1,4 @@
-name: DDNet Bot Army (Final Keypress Fix)
+name: DDNet Bot Army (Anti-VPN Detection)
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools
+          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools proxychains4
           curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
           unzip xray.zip && chmod +x xray
 
@@ -27,7 +27,7 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Auto-Fetch Proxy
+      - name: Fetch Proxy & Setup Xray
         env:
           IDX: ${{ matrix.instance }}
         run: |
@@ -47,6 +47,7 @@ jobs:
                   addr, port = hp.split(':')
                   params = dict(urllib.parse.parse_qsl(p.query))
                   config = {
+                      "log": {"loglevel": "warning"},
                       "inbounds": [{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
                       "outbounds": [{
                           "protocol": "vless",
@@ -58,16 +59,18 @@ jobs:
                               "grpcSettings": {"serviceName": params.get('serviceName', '')} if params.get('type') == 'grpc' else {},
                               "wsSettings": {"path": params.get('path', '/'), "headers": {"Host": params.get('host', '')}} if params.get('type') == 'ws' else {},
                               "xhttpSettings": {"path": params.get('path', '/'), "host": params.get('host', ''), "mode": params.get('mode', 'auto')} if params.get('type') == 'xhttp' else {}
-                          }
+                          },
+                          "mux": {"enabled": True, "concurrency": 8}
                       }]
                   }
-                  with open('xray_config.json', 'w') as f:
+                  with open('../xray_config.json', 'w') as f:
                       json.dump(config, f)
+                  print(f"Proxy #{idx+1} configured.")
           except Exception as e:
-              print(f"Proxy fetch failed: {e}")
+              print(f"Error: {e}")
           EOF
 
-      - name: Spawn & Control
+      - name: Launch Army
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
@@ -78,13 +81,25 @@ jobs:
           sleep 2
           openbox &
           
-          if [ -f "xray_config.json" ]; then
-            ./xray -c xray_config.json > xray.log 2>&1 &
-            sleep 3
-            PROXY_CFG="cl_proxy_address 127.0.0.1
-          cl_proxy_port 1080"
-          fi
+          # 1. Запуск прокси
+          ./xray -c xray_config.json > xray.log 2>&1 &
+          sleep 5
 
+          # 2. Настройка Proxychains (для форсирования трафика)
+          echo "strict_chain" > pc.conf
+          echo "proxy_dns" >> pc.conf
+          echo "remote_dns_subnet 224" >> pc.conf
+          echo "tcp_read_time_out 15000" >> pc.conf
+          echo "tcp_connect_time_out 8000" >> pc.conf
+          echo "[ProxyList]" >> pc.conf
+          echo "socks5 127.0.0.1 1080" >> pc.conf
+
+          # 3. ПРОВЕРКА IP (если тут IP Гитхаба - значит прокси не работает)
+          echo "--- ПРОВЕРКА ТЕКУЩЕГО IP ЧЕРЕЗ ПРОКСИ ---"
+          proxychains4 -f pc.conf curl -s https://ifconfig.me || echo "Ошибка прокси"
+          echo -e "\n--- ПРОВЕРКА ЗАВЕРШЕНА ---"
+
+          # 4. Настройка DDNet (убираем встроенный прокси, юзаем proxychains)
           cd ddnet_folder
           cat << EOF > bot.cfg
           cl_show_welcome 0
@@ -92,23 +107,22 @@ jobs:
           gfx_backend "opengl"
           snd_enable 0
           player_name "Panda_${{ matrix.instance }}"
-          $PROXY_CFG
           logfile "/tmp/game.log"
           EOF
 
-          ./DDNet -f bot.cfg > /dev/null 2>&1 &
-          sleep 8
+          # 5. ЗАПУСК ЧЕРЕЗ PROXYCHAINS
+          proxychains4 -f ../pc.conf ./DDNet -f bot.cfg > /dev/null 2>&1 &
+          sleep 10
 
-          echo "--- НАЧАЛО МОНИТОРИНГА ---"
+          echo "--- МОНИТОРИНГ ---"
           LAST_ID="0"
-          
           while true; do
             if [ -f "/tmp/game.log" ]; then
-                echo "--- СТАТУС ---"
+                echo "--- СТАТУС ИГРЫ ---"
                 tail -n 3 /tmp/game.log
             fi
 
-            RAW_RESPONSE=$(curl -s --max-time 1 "$CONTROL_URL")
+            RAW_RESPONSE=$(curl -s --max-time 2 "$CONTROL_URL")
             if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
                 ID=$(echo "$RAW_RESPONSE" | jq -r '.id // 0')
                 if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
@@ -116,39 +130,20 @@ jobs:
                     TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
                     VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
                     
-                    echo "ПОЛУЧЕНА КОМАНДА: $TYPE -> $VAL"
+                    echo "КОМАНДА: $TYPE -> $VAL"
                     WID=$(xdotool search --class "DDNet" | head -n 1)
-                    
                     if [ ! -z "$WID" ]; then
                         xdotool windowactivate --sync $WID
                         sleep 0.5
-                        
                         if [ "$TYPE" == "connect" ]; then
-                            # 1. Открываем консоль
-                            xdotool key F1
-                            sleep 0.8
-                            # 2. Стираем всё, что там могло быть (Ctrl+A -> BackSpace)
-                            xdotool key ctrl+a BackSpace
-                            sleep 0.2
-                            # 3. Печатаем команду медленно
-                            xdotool type --delay 100 "connect $VAL"
-                            sleep 0.3
-                            # 4. Нажимаем Enter и закрываем консоль
-                            xdotool key Return
-                            sleep 0.2
-                            xdotool key F1
-                            
+                            xdotool key F1; sleep 0.8
+                            xdotool key ctrl+a BackSpace; sleep 0.2
+                            xdotool type --delay 100 "connect $VAL"; sleep 0.3
+                            xdotool key Return; sleep 0.2; xdotool key F1
                         elif [ "$TYPE" == "chat" ]; then
-                            # На всякий случай жмем Esc (закрыть консоль, если открыта)
-                            xdotool key Escape
-                            sleep 0.2
-                            xdotool key t
-                            sleep 0.5
-                            xdotool type --delay 80 "$VAL"
-                            xdotool key Return
+                            xdotool key Escape; sleep 0.2; xdotool key t; sleep 0.5
+                            xdotool type --delay 80 "$VAL"; xdotool key Return
                         fi
-                    else
-                        echo "ОКНО НЕ НАЙДЕНО"
                     fi
                 fi
             fi
