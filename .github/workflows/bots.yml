@@ -1,4 +1,4 @@
-name: DDNet Bot Army (Validated Proxy & XUDP Fix)
+name: DDNet Bot Army Alwaysdata
 
 on:
   workflow_dispatch:
@@ -16,13 +16,8 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools unzip iptables iproute2 ca-certificates
-          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
-          curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
-          unzip -o xray.zip && chmod +x xray
-          curl -L https://github.com/xjasonlyu/tun2socks/releases/latest/download/tun2socks-linux-amd64.zip -o t2s.zip
-          unzip -o t2s.zip && mv tun2socks-linux-amd64 tun2socks && chmod +x tun2socks
-
+          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox
+      
       - name: Download DDNet
         run: |
           LINK=$(curl -s https://ddnet.org/downloads/ | grep -o 'href="[^"]*linux_x86_64\.tar\.xz"' | head -n 1 | cut -d'"' -f2)
@@ -30,484 +25,91 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Prepare Embedded VLESS Candidates
-        run: |
-          cat > proxies.txt <<'EOF'
-          vless://9a21263b-1af0-41ec-9d3a-2afda61606dc@78.17.76.197:47640?type=tcp&headerType=none&security=reality&encryption=none&sni=www.nvidia.com&fp=chrome&pbk=ks2xxgXE4JO2nYBdbxliHfvy5OEd6zdjE9UWNXJy4m4&sid=bec61d2ccb&spx=%2F#AE-01-MIFA
-          vless://8f59feef-aab9-4e0b-924c-2a31bb8f446f@138.124.6.159:30086?type=grpc&headerType=none&security=none&encryption=none&serviceName=gprc&mode=gun#CH-01-MIFA
-          vless://8f59feef-aab9-4e0b-924c-2a31bb8f446f@138.124.6.159:39800?type=xhttp&headerType=none&security=reality&encryption=none&sni=apple.com&fp=chrome&pbk=bpHDYJWkA0h_nOqRBLUbuJJXfqmIZIMGcv07zcFpdCs&sid=dc27d60c096413b5&path=%2F&mode=auto#CH-02-MIFA
-          vless://4e8d48bb-3c03-4e02-b15f-a76737cca9e7@de-new.shadownet.pro:8443?type=tcp&headerType=none&security=reality&encryption=none&sni=max.ru&fp=chrome&pbk=3uvHbYi6-LoPjhUs1AByrQicvYnUSQywtLLOX0DSpzM&sid=345678abcd&flow=xtls-rprx-vision#CH-03-MIFA
-          vless://4e8d48bb-3c03-4e02-b15f-a76737cca9e7@de-new.shadownet.pro:8443?type=tcp&headerType=none&security=reality&encryption=none&sni=max.ru&fp=chrome&pbk=3uvHbYi6-LoPjhUs1AByrQicvYnUSQywtLLOX0DSpzM&sid=90ab23cd12&flow=xtls-rprx-vision#CH-04-MIFA
-          vless://4b481152-ba7f-4445-8cc0-d33d58546e23@7qrbome80g.country-27.de-nfast.com:443?type=tcp&headerType=none&security=reality&encryption=none&sni=tradingview.com&fp=chrome&pbk=-tePObR3oZwGAUOb5kqTYkNWl6rtUKl0RFuzuu06wgw&sid=50&flow=xtls-rprx-vision#CH-05-MIFA
-          vless://c42a39d3-e7a1-4b87-a7f3-be7e3704c996@45.15.129.17:443?type=tcp&headerType=none&security=reality&encryption=none&sni=www.oracle.com&fp=chrome&pbk=kGW3p-dzpbVQnV8IM5T63UqRYu2MvI9Yl5K1GLJxWkY&sid=77#CY-01-MIFA
-          vless://da2d9e98-f486-43ec-8637-79089bc1f222@45.15.129.5:443?type=tcp&headerType=none&security=reality&encryption=none&sni=yandex.ru&fp=qq&pbk=tmRzdUIUtlS3-qqTIXF1FNRDn9gkIm4j1kdbb50OLC8&sid=62f140&flow=xtls-rprx-vision#CY-02-MIFA
-          vless://da2d9e98-f486-43ec-8637-79089bc1f222@45.15.129.5:443?type=tcp&headerType=none&security=reality&encryption=none&sni=yandex.ru&fp=chrome&pbk=tmRzdUIUtlS3-qqTIXF1FNRDn9gkIm4j1kdbb50OLC8&sid=62f140&flow=xtls-rprx-vision#CY-03-MIFA
-          vless://c42a39d3-e7a1-4b87-a7f3-be7e3704c996@45.15.129.17:443?type=tcp&headerType=none&security=reality&encryption=none&sni=www.oracle.com&fp=qq&pbk=kGW3p-dzpbVQnV8IM5T63UqRYu2MvI9Yl5K1GLJxWkY&sid=77#CY-04-MIFA
-          vless://3744b1fc-1fa5-4bd9-a901-d97a4214ae70@45.15.129.32:443?type=tcp&headerType=none&security=reality&encryption=none&sni=google.com&fp=chrome&pbk=qsT9UM8_tjOILuNP9skeOZ0SfXfnj1oTRG-kKoCfqXs&sid=d0#CY-05-MIFA
-          vless://3b95fcac-599b-4c55-bc26-89e63f9a1bd6@194.87.104.158:443?type=tcp&headerType=none&security=reality&encryption=none&sni=ads.x5.ru&fp=chrome&pbk=AhQkw1Ydp_ZkXnE7UbIZvwHk9KE_Bf5_TkojYZZUuGs&sid=2da46294d6a521B2&flow=xtls-rprx-vision#CZ-01-MIFA
-          vless://4e8d48bb-3c03-4e02-b15f-a76737cca9e7@myhistory.shadownet.pro:443?type=xhttp&headerType=none&security=tls&encryption=none&sni=myhistory.shadownet.pro&alpn=h2&path=%2FMyHistorySecondPart&mode=auto&insecure=0#CZ-02-MIFA
-          vless://f6808c62-cfe0-438c-aae6-44fe6ef51e47@89.163.237.48:8082?type=grpc&headerType=none&security=reality&encryption=none&sni=id.vk.com&fp=chrome&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&serviceName=vless-grpc-reality&mode=gun#DE-01-MIFA
-          vless://f6808c62-cfe0-438c-aae6-44fe6ef51e47@213.202.218.149:8082?type=grpc&headerType=none&security=reality&encryption=none&sni=id.vk.com&fp=chrome&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&serviceName=vless-grpc-reality&mode=gun#DE-02-MIFA
-          vless://f6808c62-cfe0-438c-aae6-44fe6ef51e47@89.163.154.211:8082?type=grpc&headerType=none&security=reality&encryption=none&sni=id.vk.com&fp=chrome&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&serviceName=vless-grpc-reality&mode=gun#DE-03-MIFA
-          vless://f6808c62-cfe0-438c-aae6-44fe6ef51e47@46.228.205.135:8082?type=grpc&headerType=none&security=reality&encryption=none&sni=id.vk.com&fp=chrome&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&serviceName=vless-grpc-reality&mode=gun#DE-04-MIFA
-          vless://f6808c62-cfe0-438c-aae6-44fe6ef51e47@213.202.222.225:8082?type=grpc&headerType=none&security=reality&encryption=none&sni=id.vk.com&fp=chrome&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&serviceName=vless-grpc-reality&mode=gun#DE-05-MIFA
-          vless://b6ce8a51-19b9-4979-91ba-b4298c26d5fc@152.89.244.33:443?type=tcp&headerType=none&security=tls&encryption=none&sni=finl9.keepsecured.net&alpn=http%2F1.1%2Ch2&flow=xtls-rprx-vision&insecure=0#DE-06-MIFA
-          EOF
-          python3 - <<EOF
-          import json, os, sys, urllib.parse
-          import ipaddress
-
-          def parse_bool(value):
-              return str(value).lower() in {"1", "true", "yes"}
-
-          def build_stream_settings(params):
-              network = params.get("type", "tcp")
-              if network == "tcp":
-                  network = "raw"
-              security = params.get("security", "none")
-              stream = {
-                  "network": network,
-                  "security": security,
-                  "sockopt": {
-                      "tcpFastOpen": True,
-                      "domainStrategy": "UseIPv4"
-                  }
-              }
-
-              if security == "reality":
-                  stream["realitySettings"] = {
-                      "serverName": params.get("sni") or params.get("serverName", ""),
-                      "publicKey": params.get("pbk", ""),
-                      "fingerprint": params.get("fp", "chrome"),
-                      "shortId": params.get("sid", ""),
-                      "spiderX": urllib.parse.unquote(params.get("spx", "/"))
-                  }
-              elif security == "tls":
-                  tls_settings = {}
-                  server_name = params.get("sni") or params.get("host") or params.get("serverName")
-                  if server_name:
-                      tls_settings["serverName"] = server_name
-                  alpn = params.get("alpn")
-                  if alpn:
-                      tls_settings["alpn"] = [item.strip() for item in alpn.split(",") if item.strip()]
-                  if "allowInsecure" in params:
-                      tls_settings["allowInsecure"] = parse_bool(params.get("allowInsecure"))
-                  if "insecure" in params:
-                      tls_settings["allowInsecure"] = parse_bool(params.get("insecure"))
-                  if tls_settings:
-                      stream["tlsSettings"] = tls_settings
-
-              if network == "ws":
-                  headers = {}
-                  host = params.get("host")
-                  if host:
-                      headers["Host"] = host
-                  stream["wsSettings"] = {
-                      "path": urllib.parse.unquote(params.get("path", "/")) or "/",
-                      "headers": headers
-                  }
-              elif network == "grpc":
-                  grpc_settings = {
-                      "serviceName": params.get("serviceName", "")
-                  }
-                  authority = params.get("authority")
-                  if authority:
-                      grpc_settings["authority"] = authority
-                  mode = params.get("mode")
-                  if mode == "multi":
-                      grpc_settings["multiMode"] = True
-                  stream["grpcSettings"] = grpc_settings
-
-              return stream
-
-          try:
-              with open("proxies.txt", "r", encoding="utf-8") as f:
-                  proxies = [l.strip() for l in f if l.strip().startswith("vless://")]
-
-              if not proxies:
-                  raise RuntimeError("No embedded vless:// links found")
-
-              candidates = []
-              seen = set()
-
-              for link in proxies:
-                  try:
-                      p = urllib.parse.urlparse(link)
-                      if '@' not in p.netloc:
-                          continue
-
-                      user_id, host_port = p.netloc.rsplit('@', 1)
-                      if ':' not in host_port:
-                          continue
-
-                      addr, port = host_port.rsplit(':', 1)
-                      try:
-                          parsed_addr = ipaddress.ip_address(addr)
-                          if parsed_addr.version != 4:
-                              continue
-                      except ValueError:
-                          # Domain names are allowed here; runtime checks still enforce IPv4 egress.
-                          pass
-
-                      params = dict(urllib.parse.parse_qsl(p.query))
-                      network = params.get("type", "tcp")
-                      if network not in {"tcp", "ws", "grpc"}:
-                          continue
-                      if params.get("security", "none") not in {"reality", "tls"}:
-                          continue
-                      key = (
-                          addr,
-                          port,
-                          network,
-                          params.get("security", "none"),
-                          params.get("sni", ""),
-                          params.get("pbk", ""),
-                          params.get("sid", ""),
-                          params.get("serviceName", ""),
-                          params.get("path", "")
-                      )
-                      if key in seen:
-                          continue
-                      seen.add(key)
-
-                      user = {"id": user_id, "encryption": "none"}
-                      flow = params.get("flow")
-                      if flow:
-                          user["flow"] = flow
-
-                      config = {
-                          "log": {"loglevel": "warning"},
-                          "dns": {"queryStrategy": "UseIPv4"},
-                          "inbounds": [{
-                              "listen": "127.0.0.1",
-                              "port": 1080,
-                              "protocol": "socks",
-                              "settings": {"auth": "noauth", "udp": True}
-                          }],
-                          "outbounds": [{
-                              "protocol": "vless",
-                              "settings": {
-                                  "vnext": [{
-                                      "address": addr,
-                                      "port": int(port),
-                                      "users": [user]
-                                  }]
-                              },
-                              "targetStrategy": "UseIPv4",
-                              "streamSettings": build_stream_settings(params),
-                              "mux": {"enabled": False}
-                          }]
-                      }
-                      candidates.append({
-                          "label": f"{addr}:{port} {network} {params.get('security', 'none')}",
-                          "config": config
-                      })
-                  except Exception:
-                      continue
-
-              if not candidates:
-                  raise RuntimeError("No valid VLESS candidates could be parsed")
-
-              with open("proxy_candidates.json", "w", encoding="utf-8") as f:
-                  json.dump(candidates, f)
-
-              print(f"Prepared {len(candidates)} embedded VLESS candidates")
-          except Exception as e:
-              print(f"Error: {e}")
-              sys.exit(1)
-          EOF
-
-      - name: Setup TUN & Run
+      - name: Spawn & Control Army
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
-          MAX_CANDIDATES: "20"
-          MAX_WORKING_CONFIGS: "2"
-          FORCE_PROXY_INDEX: ""
         run: |
-          set -euo pipefail
+          set +e
+          cd ddnet_folder
           export DISPLAY=:99
-          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset -ac > /dev/null 2>&1 &
+          
+          # Запуск экрана и МЕНЕДЖЕРА ОКОН (чтобы фокус работал)
+          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset &
           sleep 2
-          openbox > /dev/null 2>&1 &
-
-          sudo useradd -m bot 2>/dev/null || true
-          sudo pkill -x tun2socks 2>/dev/null || true
-          pkill -x xray 2>/dev/null || true
-          sudo ip link del tun0 2>/dev/null || true
-          sudo ip rule del fwmark 1 table 100 2>/dev/null || true
-          sudo iptables -t mangle -D OUTPUT -m owner --uid-owner bot -j MARK --set-mark 1 2>/dev/null || true
-          sudo iptables -t mangle -D OUTPUT -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true
-
-          sudo ip tuntap add mode tun dev tun0
-          sudo ip addr add 198.18.0.1/15 dev tun0
-          sudo ip link set dev tun0 mtu 1280
-          sudo ip link set dev tun0 up
-
-          sudo iptables -t mangle -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
-          sudo iptables -t mangle -A OUTPUT -m owner --uid-owner bot -j MARK --set-mark 1
-          sudo ip rule add fwmark 1 table 100
-          sudo ip route add default dev tun0 table 100
-
-          python3 - <<'EOF'
-          import json
-          import os
-          with open("proxy_candidates.json", "r", encoding="utf-8") as f:
-              candidates = json.load(f)
-          force_index = os.environ.get("FORCE_PROXY_INDEX", "").strip()
-          if force_index:
-              idx = int(force_index) - 1
-              if idx < 0 or idx >= len(candidates):
-                  raise SystemExit(f"FORCE_PROXY_INDEX={force_index} is out of range 1..{len(candidates)}")
-              selected = [candidates[idx]]
-              print(f"Forced candidate #{force_index}")
-          else:
-              limit = int(os.environ.get("MAX_CANDIDATES", "12"))
-              selected = candidates[:limit]
-          print(f"Selected {len(selected)} candidates for fast scan")
-          for idx, candidate in enumerate(selected, start=1):
-              with open(f"xray_config_{idx}.json", "w", encoding="utf-8") as out:
-                  json.dump(candidate["config"], out)
-              print(f"{idx}\t{candidate['label']}")
-          EOF
+          openbox & 
+          sleep 2
           
-          WORKING_CONFIGS=()
-          MAX_WORKING="${MAX_WORKING_CONFIGS:-2}"
-          for cfg in xray_config_*.json; do
-            [ -e "$cfg" ] || break
+          export LIBGL_ALWAYS_SOFTWARE=1
 
-            echo "--- TRYING $(basename "$cfg") ---"
-            pkill -x xray 2>/dev/null || true
-            sudo pkill -x tun2socks 2>/dev/null || true
-            rm -f xray.log tun2socks.log
-
-            ./xray -c "$cfg" > xray.log 2>&1 &
-            sleep 4
-
-            if ! curl -4 --silent --show-error --fail --max-time 6 --connect-timeout 4 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip > proxy_ip.txt; then
-              echo "SOCKS test failed for $(basename "$cfg")"
-              tail -n 20 xray.log || true
-              continue
-            fi
-
-            if grep -q ":" proxy_ip.txt; then
-              echo "Skipping IPv6 SOCKS IP for $(basename "$cfg"): $(cat proxy_ip.txt)"
-              continue
-            fi
-
-            echo "SOCKS IP: $(cat proxy_ip.txt)"
-
-            if ! curl -4 --silent --show-error --fail --max-time 8 --connect-timeout 4 --socks5-hostname 127.0.0.1:1080 https://master4.ddnet.org/ddnet/15/servers.json > /tmp/servers.json; then
-              echo "DDNet HTTPS test failed for $(basename "$cfg")"
-              tail -n 20 xray.log || true
-              continue
-            fi
-
-            sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > tun2socks.log 2>&1 &
-            sleep 4
-
-            if ! sudo -u bot curl -4 --silent --show-error --fail --max-time 8 --connect-timeout 4 https://ifconfig.me/ip > routed_ip.txt; then
-              echo "TUN routing test failed for $(basename "$cfg")"
-              tail -n 20 xray.log || true
-              tail -n 20 tun2socks.log || true
-              sudo pkill -x tun2socks 2>/dev/null || true
-              continue
-            fi
-
-            if grep -q ":" routed_ip.txt; then
-              echo "Skipping IPv6 TUN IP for $(basename "$cfg"): $(cat routed_ip.txt)"
-              sudo pkill -x tun2socks 2>/dev/null || true
-              continue
-            fi
-            
-            echo "TUN IP: $(cat routed_ip.txt)"
-            WORKING_CONFIGS+=("$cfg")
-            if [ "${#WORKING_CONFIGS[@]}" -ge "$MAX_WORKING" ]; then
-              break
-            fi
-          done
-          
-          if [ "${#WORKING_CONFIGS[@]}" -eq 0 ]; then
-            echo "No working proxy candidate found"
-            tail -n 40 xray.log || true
-            tail -n 40 tun2socks.log || true
-            exit 1
-          fi
-
-          CURRENT_PROXY_INDEX=0
-          LAST_WORKING_INDEX=$(( ${#WORKING_CONFIGS[@]} - 1 ))
-          CURRENT_PROXY_INDEX="$LAST_WORKING_INDEX"
-          ACTIVE_CFG="${WORKING_CONFIGS[$LAST_WORKING_INDEX]}"
-          cp "$ACTIVE_CFG" xray_config.json
-
-          restart_proxy_stack() {
-            local cfg="$1"
-
-            pkill -x xray 2>/dev/null || true
-            sudo pkill -x tun2socks 2>/dev/null || true
-            rm -f xray.log tun2socks.log
-
-            ./xray -c "$cfg" > xray.log 2>&1 &
-            sleep 4
-
-            if ! curl -4 --silent --show-error --fail --max-time 6 --connect-timeout 4 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip > proxy_ip.txt; then
-              echo "Proxy restart SOCKS test failed for $(basename "$cfg")"
-              tail -n 20 xray.log || true
-              return 1
-            fi
-
-            if grep -q ":" proxy_ip.txt; then
-              echo "Proxy restart returned IPv6 SOCKS IP for $(basename "$cfg"): $(cat proxy_ip.txt)"
-              return 1
-            fi
-
-            sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > tun2socks.log 2>&1 &
-            sleep 4
-
-            if ! sudo -u bot curl -4 --silent --show-error --fail --max-time 8 --connect-timeout 4 https://ifconfig.me/ip > routed_ip.txt; then
-              echo "Proxy restart TUN test failed for $(basename "$cfg")"
-              tail -n 20 xray.log || true
-              tail -n 20 tun2socks.log || true
-              sudo pkill -x tun2socks 2>/dev/null || true
-              return 1
-            fi
-
-            if grep -q ":" routed_ip.txt; then
-              echo "Proxy restart returned IPv6 TUN IP for $(basename "$cfg"): $(cat routed_ip.txt)"
-              sudo pkill -x tun2socks 2>/dev/null || true
-              return 1
-            fi
-
-            echo "ACTIVE SOCKS IP: $(cat proxy_ip.txt)"
-            echo "ACTIVE TUN IP: $(cat routed_ip.txt)"
-            cp "$cfg" xray_config.json
-            return 0
-          }
-
-          DDNET_DIR="$PWD/ddnet_folder"
-
-          start_ddnet() {
-            sudo pkill -u bot -x DDNet 2>/dev/null || true
-            sudo rm -f /tmp/game.log 2>/dev/null || true
-            (
-              cd "$DDNET_DIR"
-              sudo -u bot DISPLAY=:99 ./DDNet -f bot.cfg > /dev/null 2>&1 &
-            )
-            sleep 8
-          }
-
-          issue_window_command() {
-            local kind="$1"
-            local value="${2:-}"
-            local wid
-
-            wid=$(xdotool search --class "DDNet" | head -n 1 || true)
-            if [ -z "$wid" ]; then
-              echo "DDNet window not found for command '$kind'"
-              return 1
-            fi
-
-            xdotool windowactivate --sync "$wid"
-            if [ "$kind" = "connect" ]; then
-              xdotool key F1; sleep 1.2
-              xdotool key ctrl+a BackSpace; sleep 0.2
-              xdotool type --delay 100 "connect $value"
-              xdotool key Return; sleep 0.3; xdotool key F1
-            elif [ "$kind" = "chat" ]; then
-              xdotool key Escape; sleep 0.3; xdotool key t; sleep 0.5
-              xdotool type --delay 80 "$value"
-              xdotool key Return
-            elif [ "$kind" = "disconnect" ]; then
-              xdotool key F1; sleep 1.0
-              xdotool key ctrl+a BackSpace; sleep 0.2
-              xdotool type --delay 100 "disconnect"
-              xdotool key Return; sleep 0.3; xdotool key F1
-            elif [ "$kind" = "key" ]; then
-              xdotool key "$value"
-            else
-              return 1
-            fi
-          }
-
-          rotate_proxy_and_reconnect() {
-            if [ -z "${CURRENT_TARGET:-}" ]; then
-              return 1
-            fi
-
-            if [ "${#WORKING_CONFIGS[@]}" -le 1 ]; then
-              echo "No spare working proxies available for reconnect"
-              return 1
-            fi
-
-            CURRENT_PROXY_INDEX=$(( (CURRENT_PROXY_INDEX + 1) % ${#WORKING_CONFIGS[@]} ))
-            ACTIVE_CFG="${WORKING_CONFIGS[$CURRENT_PROXY_INDEX]}"
-            echo "Rotating proxy to $(basename "$ACTIVE_CFG") and retrying '$CURRENT_TARGET'"
-
-            if ! restart_proxy_stack "$ACTIVE_CFG"; then
-              return 1
-            fi
-
-            start_ddnet
-            issue_window_command connect "$CURRENT_TARGET" || return 1
-            LAST_CONNECT_AT=$(date +%s)
-            LAST_HANDLED_DISCONNECT_LINE=0
-            return 0
-          }
-
-          echo "--- IP CHECK (SHOULD BE PROXY) ---"
-          sudo -u bot curl -4 --silent --show-error --fail --max-time 10 https://ifconfig.me/ip
-
-          cd "$DDNET_DIR"
-          chmod -R 777 .
-          cat << EOF > bot.cfg
+          # Запуск 2 окон (в каждом 2 бота через Dummy)
+          for i in {1..2}; do
+            cat << EOF > "bot$i.cfg"
           cl_show_welcome 0
           cl_motd_time 0
-          gfx_backend "opengl"
+          gfx_screen_width 640
+          gfx_screen_height 480
+          player_name "Panda_${{ matrix.instance }}_$i"
+          cl_dummy_name "DUM_${{ matrix.instance }}_$i"
+          cl_dummy 1
+          cl_auto_ready 1
           snd_enable 0
-          player_name "Panda_${{ matrix.instance }}"
-          logfile "/tmp/game.log"
+          gfx_nwo_downscale 1
           EOF
+            ./DDNet -f "bot$i.cfg" > bot_debug.log 2>&1 &
+            sleep 2
+          done
+
+          echo "Ожидание прогрузки..."
+          sleep 15
           
-          cd ..
-          start_ddnet
+          LAST_ID=$(curl -s --max-time 2 "$CONTROL_URL" | jq -r '.id // 0')
 
-          echo "--- MONITORING START ---"
-          LAST_ID="0"
-          CURRENT_TARGET=""
-          LAST_CONNECT_AT=0
-          LAST_HANDLED_DISCONNECT_LINE=0
           while true; do
-            if [ -f "/tmp/game.log" ]; then
-                echo "--- GAME LOG ---"
-                tail -n 5 /tmp/game.log
-
-                DISCONNECT_LINE=$(grep -n "disconnecting. reason='unknown'" /tmp/game.log | tail -n 1 | cut -d: -f1 || true)
-                NOW_TS=$(date +%s)
-                if [ -n "$DISCONNECT_LINE" ] && [ "$DISCONNECT_LINE" != "$LAST_HANDLED_DISCONNECT_LINE" ] && [ -n "$CURRENT_TARGET" ] && [ $((NOW_TS - LAST_CONNECT_AT)) -le 20 ]; then
-                    LAST_HANDLED_DISCONNECT_LINE="$DISCONNECT_LINE"
-                    echo "Unknown disconnect soon after connect; trying another validated proxy"
-                    rotate_proxy_and_reconnect || true
-                fi
-            fi
-
-            RAW_RESPONSE=$(curl -s --max-time 1 "$CONTROL_URL" || true)
+            RAW_RESPONSE=$(curl -s --max-time 1 "$CONTROL_URL")
+            
             if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
                 ID=$(echo "$RAW_RESPONSE" | jq -r '.id // 0')
-                if [ "$ID" != "$LAST_ID" ] && [ "$ID" != "0" ]; then
-                    LAST_ID=$ID
-                    TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
-                    VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
-                    
-                    if [ "$TYPE" = "connect" ]; then
-                        CURRENT_TARGET="$VAL"
-                        LAST_CONNECT_AT=$(date +%s)
-                        LAST_HANDLED_DISCONNECT_LINE=0
-                    elif [ "$TYPE" = "disconnect" ]; then
-                        CURRENT_TARGET=""
-                        LAST_CONNECT_AT=0
-                    fi
+                
+                if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
+                  LAST_ID=$ID
+                  TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
+                  VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
+                  
+                  echo "КОМАНДА ПРИНЯТА: $TYPE -> $VAL"
 
-                    issue_window_command "$TYPE" "$VAL" || true
+                  WIDS=$(xdotool search --class "DDNet" 2>/dev/null)
+                  for WID in $WIDS; do
+                    # Жестко фокусим окно
+                    xdotool windowactivate --sync $WID 2>/dev/null
+                    sleep 0.2
+                    
+                    if [ "$TYPE" == "connect" ]; then
+                      xdotool key --window $WID Escape; sleep 0.2
+                      xdotool key --window $WID F1; sleep 0.5
+                      xdotool key --window $WID ctrl+a BackSpace; sleep 0.2
+                      xdotool type --window $WID --delay 20 "connect $VAL"
+                      sleep 0.3
+                      xdotool key --window $WID Return; sleep 0.5
+                      xdotool key --window $WID F1
+                    
+                    elif [ "$TYPE" == "disconnect" ]; then
+                      xdotool key --window $WID Escape; sleep 0.2
+                      xdotool key --window $WID F1; sleep 0.5
+                      xdotool key --window $WID ctrl+a BackSpace
+                      xdotool type --window $WID --delay 20 "disconnect"
+                      xdotool key --window $WID Return; sleep 0.3; xdotool key --window $WID F1
+
+                    elif [ "$TYPE" == "chat" ]; then
+                      xdotool key --window $WID Escape; sleep 0.2
+                      xdotool key --window $WID t; sleep 0.3
+                      xdotool type --window $WID --delay 15 "$VAL"
+                      xdotool key --window $WID Return
+                      
+                    elif [ "$TYPE" == "key" ]; then
+                      xdotool key --window $WID "$VAL"
+                    fi
+                  done
                 fi
             fi
-            sleep 5
+            sleep 1
           done
