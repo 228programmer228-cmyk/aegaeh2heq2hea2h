@@ -1,4 +1,4 @@
-name: DDNet Bot Army (Final Nekobox Style)
+name: DDNet Bot Army (Nekobox TUN Mode)
 
 on:
   workflow_dispatch:
@@ -89,8 +89,8 @@ jobs:
           sleep 2
           openbox &
           
-          # 1. Запуск Xray
-          if[ -f "xray_config.json" ]; then
+          # 1. Запуск Xray (добавлен пробел после if)
+          if [ -f "xray_config.json" ]; then
             ./xray -c xray_config.json > xray.log 2>&1 &
             sleep 3
           fi
@@ -154,7 +154,7 @@ jobs:
                     VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
                     
                     WID=$(xdotool search --class "DDNet" | head -n 1)
-                    if[ ! -z "$WID" ]; then
+                    if [ ! -z "$WID" ]; then # И здесь добавлен пробел после if
                         xdotool windowactivate --sync $WID
                         sleep 0.5
                         if [ "$TYPE" == "connect" ]; then
