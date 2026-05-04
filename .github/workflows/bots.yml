@@ -126,9 +126,19 @@ jobs:
                           continue
 
                       addr, port = host_port.rsplit(':', 1)
+                      try:
+                          if ipaddress.ip_address(addr).version != 4:
+                              continue
+                      except ValueError:
+                          # For this workflow we prefer literal IPv4 endpoints only:
+                          # no domain resolution surprises, no accidental IPv6 path.
+                          continue
+
                       params = dict(urllib.parse.parse_qsl(p.query))
                       network = params.get("type", "tcp")
                       if network not in {"tcp", "ws", "grpc"}:
+                          continue
+                      if params.get("security", "none") not in {"reality", "tls"}:
                           continue
                       key = (
                           addr,
@@ -175,7 +185,13 @@ jobs:
                       }
                       candidates.append({
                           "label": f"{addr}:{port} {network} {params.get('security', 'none')}",
-                          "config": config
+                          "config": config,
+                          "priority": (
+                              0 if params.get("security") == "reality" else 1,
+                              0 if network == "tcp" else 1 if network == "grpc" else 2,
+                              addr,
+                              int(port)
+                          )
                       })
                   except Exception:
                       continue
@@ -183,10 +199,14 @@ jobs:
               if not candidates:
                   raise RuntimeError("No valid VLESS candidates could be parsed")
 
+              candidates.sort(key=lambda item: item["priority"])
+              for item in candidates:
+                  item.pop("priority", None)
+
               with open("proxy_candidates.json", "w", encoding="utf-8") as f:
                   json.dump(candidates, f)
 
-              print(f"Prepared {len(candidates)} VLESS candidates")
+              print(f"Prepared {len(candidates)} IPv4 VLESS candidates")
           except Exception as e:
               print(f"Error: {e}")
               sys.exit(1)
@@ -195,12 +215,14 @@ jobs:
       - name: Setup TUN & Run
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
+          MAX_CANDIDATES: "8"
+          MAX_WORKING_CONFIGS: "2"
         run: |
           set -euo pipefail
           export DISPLAY=:99
-          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset -ac &
+          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset -ac > /dev/null 2>&1 &
           sleep 2
-          openbox &
+          openbox > /dev/null 2>&1 &
 
           sudo useradd -m bot 2>/dev/null || true
           sudo pkill -x tun2socks 2>/dev/null || true
@@ -222,15 +244,20 @@ jobs:
 
           python3 - <<'EOF'
           import json
+          import os
           with open("proxy_candidates.json", "r", encoding="utf-8") as f:
               candidates = json.load(f)
-          for idx, candidate in enumerate(candidates[:20], start=1):
+          limit = int(os.environ.get("MAX_CANDIDATES", "12"))
+          selected = candidates[:limit]
+          print(f"Selected {len(selected)} candidates for fast scan")
+          for idx, candidate in enumerate(selected, start=1):
               with open(f"xray_config_{idx}.json", "w", encoding="utf-8") as out:
                   json.dump(candidate["config"], out)
               print(f"{idx}\t{candidate['label']}")
           EOF
           
           WORKING_CONFIGS=()
+          MAX_WORKING="${MAX_WORKING_CONFIGS:-2}"
           for cfg in xray_config_*.json; do
             [ -e "$cfg" ] || break
 
@@ -242,7 +269,7 @@ jobs:
             ./xray -c "$cfg" > xray.log 2>&1 &
             sleep 4
 
-            if ! curl -4 --silent --show-error --fail --max-time 12 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip > proxy_ip.txt; then
+            if ! curl -4 --silent --show-error --fail --max-time 6 --connect-timeout 4 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip > proxy_ip.txt; then
               echo "SOCKS test failed for $(basename "$cfg")"
               tail -n 20 xray.log || true
               continue
@@ -255,7 +282,7 @@ jobs:
 
             echo "SOCKS IP: $(cat proxy_ip.txt)"
 
-            if ! curl -4 --silent --show-error --fail --max-time 20 --socks5-hostname 127.0.0.1:1080 https://master4.ddnet.org/ddnet/15/servers.json > /tmp/servers.json; then
+            if ! curl -4 --silent --show-error --fail --max-time 8 --connect-timeout 4 --socks5-hostname 127.0.0.1:1080 https://master4.ddnet.org/ddnet/15/servers.json > /tmp/servers.json; then
               echo "DDNet HTTPS test failed for $(basename "$cfg")"
               tail -n 20 xray.log || true
               continue
@@ -264,7 +291,7 @@ jobs:
             sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > tun2socks.log 2>&1 &
             sleep 4
 
-            if ! sudo -u bot curl -4 --silent --show-error --fail --max-time 20 https://ifconfig.me/ip > routed_ip.txt; then
+            if ! sudo -u bot curl -4 --silent --show-error --fail --max-time 8 --connect-timeout 4 https://ifconfig.me/ip > routed_ip.txt; then
               echo "TUN routing test failed for $(basename "$cfg")"
               tail -n 20 xray.log || true
               tail -n 20 tun2socks.log || true
@@ -280,7 +307,7 @@ jobs:
             
             echo "TUN IP: $(cat routed_ip.txt)"
             WORKING_CONFIGS+=("$cfg")
-            if [ "${#WORKING_CONFIGS[@]}" -ge 3 ]; then
+            if [ "${#WORKING_CONFIGS[@]}" -ge "$MAX_WORKING" ]; then
               break
             fi
           done
@@ -306,7 +333,7 @@ jobs:
             ./xray -c "$cfg" > xray.log 2>&1 &
             sleep 4
 
-            if ! curl -4 --silent --show-error --fail --max-time 12 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip > proxy_ip.txt; then
+            if ! curl -4 --silent --show-error --fail --max-time 6 --connect-timeout 4 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip > proxy_ip.txt; then
               echo "Proxy restart SOCKS test failed for $(basename "$cfg")"
               tail -n 20 xray.log || true
               return 1
@@ -320,7 +347,7 @@ jobs:
             sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > tun2socks.log 2>&1 &
             sleep 4
 
-            if ! sudo -u bot curl -4 --silent --show-error --fail --max-time 20 https://ifconfig.me/ip > routed_ip.txt; then
+            if ! sudo -u bot curl -4 --silent --show-error --fail --max-time 8 --connect-timeout 4 https://ifconfig.me/ip > routed_ip.txt; then
               echo "Proxy restart TUN test failed for $(basename "$cfg")"
               tail -n 20 xray.log || true
               tail -n 20 tun2socks.log || true
