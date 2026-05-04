@@ -1,4 +1,4 @@
-name: DDNet Bot Army ALWAYS WORKING
+name: DDNet Bot Army (Logs & Proxy Fix)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Обязательно пробел после двоеточия!
         instance: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     
     runs-on: ubuntu-latest
@@ -28,25 +27,19 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Fetch Proxy from MIFA
+      - name: Auto-Fetch Proxy
         env:
           IDX: ${{ matrix.instance }}
         run: |
-          # Качаем базу прокси
+          # Качаем базу прокси с mifa.world
           RAW_DATA=$(curl -sSL -A "Mozilla/5.0" https://mifa.world/vless)
           export RAW_DATA="$RAW_DATA"
-          
           python3 - <<EOF
           import base64, json, os, urllib.parse
           try:
               data = os.environ.get('RAW_DATA', '').strip()
-              if not data or "<!DOCTYPE" in data:
-                  print("Error fetching proxies")
-                  exit(0)
-              
               decoded = base64.b64decode(data).decode('utf-8')
               proxies = [l.strip() for l in decoded.split('\n') if l.strip().startswith('vless://')]
-              
               idx = int(os.environ.get('IDX')) - 1
               if idx < len(proxies):
                   link = proxies[idx]
@@ -54,7 +47,6 @@ jobs:
                   u, hp = p.netloc.split('@')
                   addr, port = hp.split(':')
                   params = dict(urllib.parse.parse_qsl(p.query))
-                  
                   config = {
                       "inbounds": [{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
                       "outbounds": [{
@@ -72,82 +64,83 @@ jobs:
                   }
                   with open('xray_config.json', 'w') as f:
                       json.dump(config, f)
-                  print("Proxy configured")
           except Exception as e:
-              print(f"Failed: {e}")
+              print(f"Proxy fetch failed: {e}")
           EOF
 
-      - name: Spawn & Control Army
+      - name: Spawn & Control
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
           set +e
           export DISPLAY=:99
           export LIBGL_ALWAYS_SOFTWARE=1
-          
-          # Запуск экрана
-          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset &
+          Xvfb :99 -screen 0 640x480x24 +extension GLX +render -noreset &
           sleep 2
-          openbox & 
-          sleep 1
-
+          openbox &
+          
           # Запуск прокси
           if [ -f "xray_config.json" ]; then
-            ./xray -c xray_config.json > /dev/null 2>&1 &
+            ./xray -c xray_config.json > xray.log 2>&1 &
             sleep 3
             PROXY_CFG="cl_proxy_address 127.0.0.1
           cl_proxy_port 1080"
-          else
-            PROXY_CFG=""
           fi
 
-          # Твоя оригинальная логика создания ботов
+          # Настройка DDNet
           cd ddnet_folder
           cat << EOF > bot.cfg
           cl_show_welcome 0
           cl_motd_time 0
-          gfx_screen_width 640
-          gfx_screen_height 480
-          player_name "Panda_${{ matrix.instance }}"
+          gfx_backend "opengl"
           snd_enable 0
+          player_name "Panda_${{ matrix.instance }}"
           $PROXY_CFG
-          logfile "game.log"
+          logfile "/tmp/game.log"
           EOF
 
-          # Запуск
-          ./DDNet -f bot.cfg > /dev/null 2>&1 &
-          sleep 10
+          # Запуск игры
+          ./DDNet -f bot.cfg > /tmp/stdout.log 2>&1 &
+          sleep 5
 
-          echo "--- МОНИТОРИНГ ---"
+          echo "--- НАЧАЛО МОНИТОРИНГА ---"
           LAST_ID="0"
+          
           while true; do
-            # Выводим лог игры для отладки
-            echo "--- GAME STATUS ---"
-            tail -n 3 game.log 2>/dev/null || echo "Starting..."
+            # ВЫВОД СТАТУСА (теперь ты увидишь Connecting...)
+            if [ -f "/tmp/game.log" ]; then
+                echo "--- СТАТУС ИГРЫ ---"
+                tail -n 5 /tmp/game.log
+            else
+                echo "Ожидание инициализации игры..."
+            fi
 
+            # Проверка команд с сайта
             RAW_RESPONSE=$(curl -s --max-time 1 "$CONTROL_URL")
             if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
                 ID=$(echo "$RAW_RESPONSE" | jq -r '.id // 0')
                 if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
-                  LAST_ID=$ID
-                  TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
-                  VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
-                  
-                  WID=$(xdotool search --class "DDNet" | head -n 1)
-                  if [ ! -z "$WID" ]; then
-                    xdotool windowactivate --sync $WID
-                    if [ "$TYPE" == "connect" ]; then
-                      xdotool key F1
-                      sleep 0.2
-                      xdotool type "connect $VAL"
-                      xdotool key Return F1
-                    elif [ "$TYPE" == "chat" ]; then
-                      xdotool key t
-                      sleep 0.2
-                      xdotool type "$VAL"
-                      xdotool key Return
+                    LAST_ID=$ID
+                    TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
+                    VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
+                    
+                    echo "ПОЛУЧЕНА КОМАНДА: $TYPE -> $VAL"
+                    WID=$(xdotool search --class "DDNet" | head -n 1)
+                    
+                    if [ ! -z "$WID" ]; then
+                        xdotool windowactivate --sync $WID
+                        if [ "$TYPE" == "connect" ]; then
+                            xdotool key --delay 50 F1
+                            xdotool type --delay 20 "connect $VAL"
+                            xdotool key Return F1
+                        elif [ "$TYPE" == "chat" ]; then
+                            xdotool key t
+                            xdotool type --delay 20 "$VAL"
+                            xdotool key Return
+                        fi
+                    else
+                        echo "ОШИБКА: Окно игры не найдено!"
                     fi
-                  fi
                 fi
             fi
             sleep 5
