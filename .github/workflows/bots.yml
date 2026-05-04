@@ -1,4 +1,4 @@
-name: DDNet Bot Army (Logs & Proxy Fix)
+name: DDNet Bot Army (Final Keypress Fix)
 
 on:
   workflow_dispatch:
@@ -31,7 +31,6 @@ jobs:
         env:
           IDX: ${{ matrix.instance }}
         run: |
-          # Качаем базу прокси с mifa.world
           RAW_DATA=$(curl -sSL -A "Mozilla/5.0" https://mifa.world/vless)
           export RAW_DATA="$RAW_DATA"
           python3 - <<EOF
@@ -75,11 +74,10 @@ jobs:
           set +e
           export DISPLAY=:99
           export LIBGL_ALWAYS_SOFTWARE=1
-          Xvfb :99 -screen 0 640x480x24 +extension GLX +render -noreset &
+          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset &
           sleep 2
           openbox &
           
-          # Запуск прокси
           if [ -f "xray_config.json" ]; then
             ./xray -c xray_config.json > xray.log 2>&1 &
             sleep 3
@@ -87,7 +85,6 @@ jobs:
           cl_proxy_port 1080"
           fi
 
-          # Настройка DDNet
           cd ddnet_folder
           cat << EOF > bot.cfg
           cl_show_welcome 0
@@ -99,23 +96,18 @@ jobs:
           logfile "/tmp/game.log"
           EOF
 
-          # Запуск игры
-          ./DDNet -f bot.cfg > /tmp/stdout.log 2>&1 &
-          sleep 5
+          ./DDNet -f bot.cfg > /dev/null 2>&1 &
+          sleep 8
 
           echo "--- НАЧАЛО МОНИТОРИНГА ---"
           LAST_ID="0"
           
           while true; do
-            # ВЫВОД СТАТУСА (теперь ты увидишь Connecting...)
             if [ -f "/tmp/game.log" ]; then
-                echo "--- СТАТУС ИГРЫ ---"
-                tail -n 5 /tmp/game.log
-            else
-                echo "Ожидание инициализации игры..."
+                echo "--- СТАТУС ---"
+                tail -n 3 /tmp/game.log
             fi
 
-            # Проверка команд с сайта
             RAW_RESPONSE=$(curl -s --max-time 1 "$CONTROL_URL")
             if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
                 ID=$(echo "$RAW_RESPONSE" | jq -r '.id // 0')
@@ -129,17 +121,34 @@ jobs:
                     
                     if [ ! -z "$WID" ]; then
                         xdotool windowactivate --sync $WID
+                        sleep 0.5
+                        
                         if [ "$TYPE" == "connect" ]; then
-                            xdotool key --delay 50 F1
-                            xdotool type --delay 20 "connect $VAL"
-                            xdotool key Return F1
+                            # 1. Открываем консоль
+                            xdotool key F1
+                            sleep 0.8
+                            # 2. Стираем всё, что там могло быть (Ctrl+A -> BackSpace)
+                            xdotool key ctrl+a BackSpace
+                            sleep 0.2
+                            # 3. Печатаем команду медленно
+                            xdotool type --delay 100 "connect $VAL"
+                            sleep 0.3
+                            # 4. Нажимаем Enter и закрываем консоль
+                            xdotool key Return
+                            sleep 0.2
+                            xdotool key F1
+                            
                         elif [ "$TYPE" == "chat" ]; then
+                            # На всякий случай жмем Esc (закрыть консоль, если открыта)
+                            xdotool key Escape
+                            sleep 0.2
                             xdotool key t
-                            xdotool type --delay 20 "$VAL"
+                            sleep 0.5
+                            xdotool type --delay 80 "$VAL"
                             xdotool key Return
                         fi
                     else
-                        echo "ОШИБКА: Окно игры не найдено!"
+                        echo "ОКНО НЕ НАЙДЕНО"
                     fi
                 fi
             fi
