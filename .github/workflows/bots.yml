@@ -36,17 +36,23 @@ jobs:
           export RAW_DATA="$RAW_DATA"
           python3 - <<EOF
           import base64, json, os, sys, urllib.parse
+          import ipaddress
 
           def parse_bool(value):
               return str(value).lower() in {"1", "true", "yes"}
 
           def build_stream_settings(params):
               network = params.get("type", "tcp")
+              if network == "tcp":
+                  network = "raw"
               security = params.get("security", "none")
               stream = {
                   "network": network,
                   "security": security,
-                  "sockopt": {"tcpFastOpen": True}
+                  "sockopt": {
+                      "tcpFastOpen": True,
+                      "domainStrategy": "UseIPv4"
+                  }
               }
 
               if security == "reality":
@@ -121,10 +127,13 @@ jobs:
 
                       addr, port = host_port.rsplit(':', 1)
                       params = dict(urllib.parse.parse_qsl(p.query))
+                      network = params.get("type", "tcp")
+                      if network not in {"tcp", "ws", "grpc"}:
+                          continue
                       key = (
                           addr,
                           port,
-                          params.get("type", "tcp"),
+                          network,
                           params.get("security", "none"),
                           params.get("sni", ""),
                           params.get("pbk", ""),
@@ -143,6 +152,7 @@ jobs:
 
                       config = {
                           "log": {"loglevel": "warning"},
+                          "dns": {"queryStrategy": "UseIPv4"},
                           "inbounds": [{
                               "listen": "127.0.0.1",
                               "port": 1080,
@@ -158,12 +168,13 @@ jobs:
                                       "users": [user]
                                   }]
                               },
+                              "targetStrategy": "UseIPv4",
                               "streamSettings": build_stream_settings(params),
                               "mux": {"enabled": False}
                           }]
                       }
                       candidates.append({
-                          "label": f"{addr}:{port} {params.get('type', 'tcp')} {params.get('security', 'none')}",
+                          "label": f"{addr}:{port} {network} {params.get('security', 'none')}",
                           "config": config
                       })
                   except Exception:
@@ -218,8 +229,8 @@ jobs:
                   json.dump(candidate["config"], out)
               print(f"{idx}\t{candidate['label']}")
           EOF
-
-          PROXY_READY=0
+          
+          WORKING_CONFIGS=()
           for cfg in xray_config_*.json; do
             [ -e "$cfg" ] || break
 
@@ -231,15 +242,20 @@ jobs:
             ./xray -c "$cfg" > xray.log 2>&1 &
             sleep 4
 
-            if ! curl --silent --show-error --fail --max-time 12 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip > proxy_ip.txt; then
+            if ! curl -4 --silent --show-error --fail --max-time 12 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip > proxy_ip.txt; then
               echo "SOCKS test failed for $(basename "$cfg")"
               tail -n 20 xray.log || true
               continue
             fi
 
+            if grep -q ":" proxy_ip.txt; then
+              echo "Skipping IPv6 SOCKS IP for $(basename "$cfg"): $(cat proxy_ip.txt)"
+              continue
+            fi
+
             echo "SOCKS IP: $(cat proxy_ip.txt)"
 
-            if ! curl --silent --show-error --fail --max-time 20 --socks5-hostname 127.0.0.1:1080 https://master4.ddnet.org/ddnet/15/servers.json > /tmp/servers.json; then
+            if ! curl -4 --silent --show-error --fail --max-time 20 --socks5-hostname 127.0.0.1:1080 https://master4.ddnet.org/ddnet/15/servers.json > /tmp/servers.json; then
               echo "DDNet HTTPS test failed for $(basename "$cfg")"
               tail -n 20 xray.log || true
               continue
@@ -248,7 +264,7 @@ jobs:
             sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > tun2socks.log 2>&1 &
             sleep 4
 
-            if ! sudo -u bot curl --silent --show-error --fail --max-time 20 https://ifconfig.me/ip > routed_ip.txt; then
+            if ! sudo -u bot curl -4 --silent --show-error --fail --max-time 20 https://ifconfig.me/ip > routed_ip.txt; then
               echo "TUN routing test failed for $(basename "$cfg")"
               tail -n 20 xray.log || true
               tail -n 20 tun2socks.log || true
@@ -256,23 +272,153 @@ jobs:
               continue
             fi
 
+            if grep -q ":" routed_ip.txt; then
+              echo "Skipping IPv6 TUN IP for $(basename "$cfg"): $(cat routed_ip.txt)"
+              sudo pkill -x tun2socks 2>/dev/null || true
+              continue
+            fi
+            
             echo "TUN IP: $(cat routed_ip.txt)"
-            cp "$cfg" xray_config.json
-            PROXY_READY=1
-            break
+            WORKING_CONFIGS+=("$cfg")
+            if [ "${#WORKING_CONFIGS[@]}" -ge 3 ]; then
+              break
+            fi
           done
-
-          if [ "$PROXY_READY" -ne 1 ]; then
+          
+          if [ "${#WORKING_CONFIGS[@]}" -eq 0 ]; then
             echo "No working proxy candidate found"
             tail -n 40 xray.log || true
             tail -n 40 tun2socks.log || true
             exit 1
           fi
 
-          echo "--- IP CHECK (SHOULD BE PROXY) ---"
-          sudo -u bot curl --silent --show-error --fail --max-time 10 https://ifconfig.me/ip
+          CURRENT_PROXY_INDEX=0
+          ACTIVE_CFG="${WORKING_CONFIGS[$CURRENT_PROXY_INDEX]}"
+          cp "$ACTIVE_CFG" xray_config.json
 
-          cd ddnet_folder
+          restart_proxy_stack() {
+            local cfg="$1"
+
+            pkill -x xray 2>/dev/null || true
+            sudo pkill -x tun2socks 2>/dev/null || true
+            rm -f xray.log tun2socks.log
+
+            ./xray -c "$cfg" > xray.log 2>&1 &
+            sleep 4
+
+            if ! curl -4 --silent --show-error --fail --max-time 12 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip > proxy_ip.txt; then
+              echo "Proxy restart SOCKS test failed for $(basename "$cfg")"
+              tail -n 20 xray.log || true
+              return 1
+            fi
+
+            if grep -q ":" proxy_ip.txt; then
+              echo "Proxy restart returned IPv6 SOCKS IP for $(basename "$cfg"): $(cat proxy_ip.txt)"
+              return 1
+            fi
+
+            sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > tun2socks.log 2>&1 &
+            sleep 4
+
+            if ! sudo -u bot curl -4 --silent --show-error --fail --max-time 20 https://ifconfig.me/ip > routed_ip.txt; then
+              echo "Proxy restart TUN test failed for $(basename "$cfg")"
+              tail -n 20 xray.log || true
+              tail -n 20 tun2socks.log || true
+              sudo pkill -x tun2socks 2>/dev/null || true
+              return 1
+            fi
+
+            if grep -q ":" routed_ip.txt; then
+              echo "Proxy restart returned IPv6 TUN IP for $(basename "$cfg"): $(cat routed_ip.txt)"
+              sudo pkill -x tun2socks 2>/dev/null || true
+              return 1
+            fi
+
+            echo "ACTIVE SOCKS IP: $(cat proxy_ip.txt)"
+            echo "ACTIVE TUN IP: $(cat routed_ip.txt)"
+            cp "$cfg" xray_config.json
+            return 0
+          }
+
+          DDNET_DIR="$PWD/ddnet_folder"
+
+          start_ddnet() {
+            sudo pkill -u bot -x DDNet 2>/dev/null || true
+            sudo rm -f /tmp/game.log 2>/dev/null || true
+            (
+              cd "$DDNET_DIR"
+              sudo -u bot DISPLAY=:99 ./DDNet -f bot.cfg > /dev/null 2>&1 &
+            )
+            sleep 8
+          }
+
+          issue_window_command() {
+            local kind="$1"
+            local value="${2:-}"
+            local wid
+
+            wid=$(xdotool search --class "DDNet" | head -n 1 || true)
+            if [ -z "$wid" ]; then
+              echo "DDNet window not found for command '$kind'"
+              return 1
+            fi
+
+            xdotool windowactivate --sync "$wid"
+            if [ "$kind" = "connect" ]; then
+              xdotool key F1; sleep 1.2
+              xdotool key ctrl+a BackSpace; sleep 0.2
+              xdotool type --delay 100 "connect $value"
+              xdotool key Return; sleep 0.3; xdotool key F1
+            elif [ "$kind" = "chat" ]; then
+              xdotool key Escape; sleep 0.3; xdotool key t; sleep 0.5
+              xdotool type --delay 80 "$value"
+              xdotool key Return
+            elif [ "$kind" = "disconnect" ]; then
+              xdotool key F1; sleep 1.0
+              xdotool key ctrl+a BackSpace; sleep 0.2
+              xdotool type --delay 100 "disconnect"
+              xdotool key Return; sleep 0.3; xdotool key F1
+            elif [ "$kind" = "key" ]; then
+              xdotool key "$value"
+            else
+              return 1
+            fi
+          }
+
+          rotate_proxy_and_reconnect() {
+            if [ -z "${CURRENT_TARGET:-}" ]; then
+              return 1
+            fi
+
+            if [ "${#WORKING_CONFIGS[@]}" -le 1 ]; then
+              echo "No spare working proxies available for reconnect"
+              return 1
+            fi
+
+            CURRENT_PROXY_INDEX=$(( (CURRENT_PROXY_INDEX + 1) % ${#WORKING_CONFIGS[@]} ))
+            ACTIVE_CFG="${WORKING_CONFIGS[$CURRENT_PROXY_INDEX]}"
+            echo "Rotating proxy to $(basename "$ACTIVE_CFG") and retrying '$CURRENT_TARGET'"
+
+            if ! restart_proxy_stack "$ACTIVE_CFG"; then
+              return 1
+            fi
+
+            start_ddnet
+            issue_window_command connect "$CURRENT_TARGET" || return 1
+            LAST_CONNECT_AT=$(date +%s)
+            LAST_HANDLED_DISCONNECT_LINE=0
+            return 0
+          }
+
+          if ! restart_proxy_stack "$ACTIVE_CFG"; then
+            echo "Failed to start active proxy stack"
+            exit 1
+          fi
+
+          echo "--- IP CHECK (SHOULD BE PROXY) ---"
+          sudo -u bot curl -4 --silent --show-error --fail --max-time 10 https://ifconfig.me/ip
+
+          cd "$DDNET_DIR"
           chmod -R 777 .
           cat << EOF > bot.cfg
           cl_show_welcome 0
@@ -282,19 +428,30 @@ jobs:
           player_name "Panda_${{ matrix.instance }}"
           logfile "/tmp/game.log"
           EOF
-
-          sudo -u bot DISPLAY=:99 ./DDNet -f bot.cfg > /dev/null 2>&1 &
-          sleep 8
+          
+          cd ..
+          start_ddnet
 
           echo "--- MONITORING START ---"
           LAST_ID="0"
+          CURRENT_TARGET=""
+          LAST_CONNECT_AT=0
+          LAST_HANDLED_DISCONNECT_LINE=0
           while true; do
             if [ -f "/tmp/game.log" ]; then
                 echo "--- GAME LOG ---"
-                tail -n 3 /tmp/game.log
+                tail -n 5 /tmp/game.log
+
+                DISCONNECT_LINE=$(grep -n "disconnecting. reason='unknown'" /tmp/game.log | tail -n 1 | cut -d: -f1 || true)
+                NOW_TS=$(date +%s)
+                if [ -n "$DISCONNECT_LINE" ] && [ "$DISCONNECT_LINE" != "$LAST_HANDLED_DISCONNECT_LINE" ] && [ -n "$CURRENT_TARGET" ] && [ $((NOW_TS - LAST_CONNECT_AT)) -le 20 ]; then
+                    LAST_HANDLED_DISCONNECT_LINE="$DISCONNECT_LINE"
+                    echo "Unknown disconnect soon after connect; trying another validated proxy"
+                    rotate_proxy_and_reconnect || true
+                fi
             fi
 
-            RAW_RESPONSE=$(curl -s --max-time 1 "$CONTROL_URL")
+            RAW_RESPONSE=$(curl -s --max-time 1 "$CONTROL_URL" || true)
             if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
                 ID=$(echo "$RAW_RESPONSE" | jq -r '.id // 0')
                 if [ "$ID" != "$LAST_ID" ] && [ "$ID" != "0" ]; then
@@ -302,19 +459,16 @@ jobs:
                     TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
                     VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
                     
-                    WID=$(xdotool search --class "DDNet" | head -n 1)
-                    if [ -n "$WID" ]; then
-                        xdotool windowactivate --sync $WID
-                        if [ "$TYPE" == "connect" ]; then
-                            xdotool key F1; sleep 1.2
-                            xdotool key ctrl+a BackSpace; sleep 0.2
-                            xdotool type --delay 100 "connect $VAL"
-                            xdotool key Return; sleep 0.3; xdotool key F1
-                        elif [ "$TYPE" == "chat" ]; then
-                            xdotool key Escape; sleep 0.3; xdotool key t; sleep 0.5
-                            xdotool type --delay 80 "$VAL"; xdotool key Return
-                        fi
+                    if [ "$TYPE" = "connect" ]; then
+                        CURRENT_TARGET="$VAL"
+                        LAST_CONNECT_AT=$(date +%s)
+                        LAST_HANDLED_DISCONNECT_LINE=0
+                    elif [ "$TYPE" = "disconnect" ]; then
+                        CURRENT_TARGET=""
+                        LAST_CONNECT_AT=0
                     fi
+
+                    issue_window_command "$TYPE" "$VAL" || true
                 fi
             fi
             sleep 5
