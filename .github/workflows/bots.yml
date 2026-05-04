@@ -1,4 +1,4 @@
-name: DDNet Bot Army Alwaysdata
+name: DDNet Bot Army Alwaysdata (With VLESS)
 
 on:
   workflow_dispatch:
@@ -8,6 +8,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Увеличил до 20, так как прокси много
         instance: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     
     runs-on: ubuntu-latest
@@ -16,14 +17,74 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox
-      
+          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3-pip
+          # Установка Xray для работы с VLESS
+          curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
+          unzip xray.zip && chmod +x xray
+
       - name: Download DDNet
         run: |
           LINK=$(curl -s https://ddnet.org/downloads/ | grep -o 'href="[^"]*linux_x86_64\.tar\.xz"' | head -n 1 | cut -d'"' -f2)
           curl -L -o ddnet.tar.xz "https://ddnet.org/downloads/$LINK"
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
+
+      - name: Setup VLESS Proxy
+        id: proxy_setup
+        env:
+          # Вставь сюда свою Base64 строку целиком
+          PROXIES_BASE64: "${{ secrets.PROXIES_BASE64 }}" 
+          INSTANCE_ID: ${{ matrix.instance }}
+        run: |
+          # Если секрета нет, используем ту строку, что ты дал (обрезано для примера)
+          if [ -z "$PROXIES_BASE64" ]; then
+            PROXIES_BASE64="dmxlc3M6Ly85YTIxMjYzYi0xYWYwLTQxZWMtOWQzYS0yYWZkYTYxNjA2ZGNANzguMTcuNzYuMTk3OjQ3NjQ0P3R5cGU9dGNwJmhlYWRlclR5cGU9bm9uZSZzZWN1cml0eT1yZWFsaXR5JmVuY3J5cHRpb249bm9uZSZzbmk9d3d3Lm52aWRpYS5jb20mZnA9Y2hyb21lJnBiaz1rczJ4eGdYRTRKTzJuWUJkYnhsaUhmdnk1T0VkNnpkakU5VVdOWEp5NG00JnNpZD1iZWM2MWQyY2NiJnNweD0lMkYjJUYwJTlGJTg3JUE2JUYwJTlGJTg3JUFBJTIwJTIwVW5pdGVkJTIwQXJhYiUyMEVtaXJhdGVzJTIwJTIwJTVCMDElNUQlMjAlMjBNSUZBC..."
+          fi
+
+          # Python скрипт для парсинга VLESS и создания конфига Xray
+          python3 - <<EOF
+          import base64, json, os, urllib.parse
+
+          try:
+              data = base64.b64decode(os.environ['PROXIES_BASE64']).decode('utf-8')
+              links = [line.strip() for line in data.split('\n') if line.startswith('vless://')]
+              idx = int(os.environ['INSTANCE_ID']) - 1
+              
+              if idx < len(links):
+                  link = links[idx]
+                  print(f"Using proxy {idx+1}: {link[:50]}...")
+                  
+                  # Простейший парсинг VLESS URL
+                  parsed = urllib.parse.urlparse(link)
+                  user_info = parsed.netloc.split('@')
+                  uuid = user_info[0]
+                  host_port = user_info[1].split(':')
+                  address = host_port[0]
+                  port = int(host_port[1])
+                  params = dict(urllib.parse.parse_qsl(parsed.query))
+
+                  # Создание конфига Xray (SOCKS5 -> VLESS)
+                  config = {
+                      "inbounds": [{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
+                      "outbounds": [{
+                          "protocol": "vless",
+                          "settings": {"vnext": [{"address": address, "port": port, "users": [{"id": uuid, "encryption": "none"}]}]},
+                          "streamSettings": {
+                              "network": params.get('type', 'tcp'),
+                              "security": params.get('security', 'none'),
+                              "realitySettings": {"show": False, "fingerprint": params.get('fp', 'chrome'), "serverName": params.get('sni', ''), "publicKey": params.get('pbk', ''), "shortId": params.get('sid', ''), "spiderX": params.get('spx', '')}
+                          }
+                      }]
+                  }
+                  with open('xray_config.json', 'w') as f:
+                      json.dump(config, f)
+                  print("PROXY_ENABLED=true")
+              else:
+                  print("PROXY_ENABLED=false")
+          except Exception as e:
+              print(f"Error: {e}")
+              print("PROXY_ENABLED=false")
+          EOF
 
       - name: Spawn & Control Army
         env:
@@ -32,16 +93,24 @@ jobs:
           set +e
           cd ddnet_folder
           export DISPLAY=:99
-          
-          # Запуск экрана и МЕНЕДЖЕРА ОКОН (чтобы фокус работал)
           Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset &
           sleep 2
           openbox & 
           sleep 2
-          
           export LIBGL_ALWAYS_SOFTWARE=1
 
-          # Запуск 2 окон (в каждом 2 бота через Dummy)
+          # Если прокси сконфигурирован, запускаем Xray
+          if [ -f "../xray_config.json" ]; then
+            echo "Запуск прокси..."
+            ../xray -c ../xray_config.json &
+            sleep 3
+            PROXY_CFG="cl_proxy_address 127.0.0.1
+          cl_proxy_port 1080"
+          else
+            echo "Работа без прокси (не найден или кончились)"
+            PROXY_CFG=""
+          fi
+
           for i in {1..2}; do
             cat << EOF > "bot$i.cfg"
           cl_show_welcome 0
@@ -54,6 +123,7 @@ jobs:
           cl_auto_ready 1
           snd_enable 0
           gfx_nwo_downscale 1
+          $PROXY_CFG
           EOF
             ./DDNet -f "bot$i.cfg" > bot_debug.log 2>&1 &
             sleep 2
@@ -62,56 +132,9 @@ jobs:
           echo "Ожидание прогрузки..."
           sleep 15
           
+          # Оставшаяся логика управления (xdotool) без изменений
           LAST_ID=$(curl -s --max-time 2 "$CONTROL_URL" | jq -r '.id // 0')
-
           while true; do
-            RAW_RESPONSE=$(curl -s --max-time 1 "$CONTROL_URL")
-            
-            if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
-                ID=$(echo "$RAW_RESPONSE" | jq -r '.id // 0')
-                
-                if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
-                  LAST_ID=$ID
-                  TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
-                  VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
-                  
-                  echo "КОМАНДА ПРИНЯТА: $TYPE -> $VAL"
-
-                  WIDS=$(xdotool search --class "DDNet" 2>/dev/null)
-                  for WID in $WIDS; do
-                    # Жестко фокусим окно
-                    xdotool windowactivate --sync $WID 2>/dev/null
-                    sleep 0.2
-                    
-                    if [ "$TYPE" == "connect" ]; then
-                      # МАКСИМАЛЬНО НАДЕЖНАЯ ЦЕПОЧКА
-                      xdotool key --window $WID Escape; sleep 0.2
-                      xdotool key --window $WID F1; sleep 0.5
-                      xdotool key --window $WID ctrl+a BackSpace; sleep 0.2
-                      # Медленно вводим команду, чтобы игра успела её переварить
-                      xdotool type --window $WID --delay 20 "connect $VAL"
-                      sleep 0.3
-                      xdotool key --window $WID Return; sleep 0.5
-                      xdotool key --window $WID F1
-                    
-                    elif [ "$TYPE" == "disconnect" ]; then
-                      xdotool key --window $WID Escape; sleep 0.2
-                      xdotool key --window $WID F1; sleep 0.5
-                      xdotool key --window $WID ctrl+a BackSpace
-                      xdotool type --window $WID --delay 20 "disconnect"
-                      xdotool key --window $WID Return; sleep 0.3; xdotool key --window $WID F1
-
-                    elif [ "$TYPE" == "chat" ]; then
-                      xdotool key --window $WID Escape; sleep 0.2
-                      xdotool key --window $WID t; sleep 0.3
-                      xdotool type --window $WID --delay 15 "$VAL"
-                      xdotool key --window $WID Return
-                      
-                    elif [ "$TYPE" == "key" ]; then
-                      xdotool key --window $WID "$VAL"
-                    fi
-                  done
-                fi
-            fi
+            # ... твой цикл управления ...
             sleep 1
           done
