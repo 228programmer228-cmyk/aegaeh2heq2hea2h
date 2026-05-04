@@ -1,4 +1,4 @@
-name: DDNet Bot Army (Nekobox TUN Mode)
+name: DDNet Bot Army (Final Nekobox Style)
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
           curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
           unzip -o xray.zip && chmod +x xray
           
-          # Качаем tun2socks (ОШИБКА БЫЛА ЗДЕСЬ: теперь это ZIP архив)
+          # Качаем tun2socks
           curl -L https://github.com/xjasonlyu/tun2socks/releases/latest/download/tun2socks-linux-amd64.zip -o t2s.zip
           unzip -o t2s.zip
           mv tun2socks-linux-amd64 tun2socks
@@ -56,7 +56,7 @@ jobs:
                   params = dict(urllib.parse.parse_qsl(p.query))
                   config = {
                       "inbounds":[{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
-                      "outbounds": [{
+                      "outbounds":[{
                           "protocol": "vless",
                           "settings": {"vnext":[{"address": addr, "port": int(port), "users":[{"id": u, "encryption": "none"}]}]},
                           "streamSettings": {
@@ -83,13 +83,14 @@ jobs:
           set +e
           export DISPLAY=:99
           export LIBGL_ALWAYS_SOFTWARE=1
-          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset &
+          
+          # Запуск экрана (флаг -ac отключает проверку прав xhost)
+          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset -ac &
           sleep 2
           openbox &
-          xhost + # Разрешаем сторонним юзерам рисовать окна
           
           # 1. Запуск Xray
-          if [ -f "xray_config.json" ]; then
+          if[ -f "xray_config.json" ]; then
             ./xray -c xray_config.json > xray.log 2>&1 &
             sleep 3
           fi
@@ -153,10 +154,10 @@ jobs:
                     VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
                     
                     WID=$(xdotool search --class "DDNet" | head -n 1)
-                    if [ ! -z "$WID" ]; then
+                    if[ ! -z "$WID" ]; then
                         xdotool windowactivate --sync $WID
                         sleep 0.5
-                        if[ "$TYPE" == "connect" ]; then
+                        if [ "$TYPE" == "connect" ]; then
                             xdotool key F1; sleep 1.0
                             xdotool key ctrl+a BackSpace; sleep 0.2
                             xdotool type --delay 100 "connect $VAL"; sleep 0.3
