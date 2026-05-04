@@ -1,4 +1,4 @@
-name: DDNet Bot Army (Nekobox Style - TUN Mode)
+name: DDNet Bot Army (Final Nekobox Style)
 
 on:
   workflow_dispatch:
@@ -17,12 +17,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools
+          
           # Качаем Xray
           curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
           unzip xray.zip && chmod +x xray
-          # Качаем tun2socks для режима TUN (как в Nekobox)
-          curl -L https://github.com/xjasonlyu/tun2socks/releases/latest/download/tun2socks-linux-amd64.v2.tar.gz | tar xz
-          mv tun2socks-linux-amd64 tun2socks && chmod +x tun2socks
+          
+          # Качаем tun2socks (Исправленная ссылка)
+          curl -L https://github.com/xjasonlyu/tun2socks/releases/latest/download/tun2socks-linux-amd64.tar.gz | tar xz
+          # Находим бинарник (он может быть в папке или в корне)
+          find . -name "tun2socks*" -exec mv {} tun2socks \;
+          chmod +x tun2socks
 
       - name: Download DDNet
         run: |
@@ -31,11 +35,11 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Setup Xray & TUN (Nekobox Mode)
+      - name: Setup VLESS & Network
         env:
           IDX: ${{ matrix.instance }}
         run: |
-          # 1. Получаем прокси
+          # 1. Получаем прокси с сайта
           RAW_DATA=$(curl -sSL -A "Mozilla/5.0" https://mifa.world/vless)
           export RAW_DATA="$RAW_DATA"
           
@@ -46,7 +50,6 @@ jobs:
               decoded = base64.b64decode(data).decode('utf-8')
               proxies = [l.strip() for l in decoded.split('\n') if l.strip().startswith('vless://')]
               
-              # Берем прокси для текущей машины
               idx = int(os.environ.get('IDX')) - 1
               if idx < len(proxies):
                   link = proxies[idx]
@@ -66,12 +69,12 @@ jobs:
                               "realitySettings": {"serverName": params.get('sni',''), "publicKey": params.get('pbk',''), "fingerprint": params.get('fp','chrome'), "shortId": params.get('sid',''), "spiderX": params.get('spx','')} if params.get('security') == 'reality' else {},
                               "grpcSettings": {"serviceName": params.get('serviceName', '')} if params.get('type') == 'grpc' else {},
                               "wsSettings": {"path": params.get('path', '/')} if params.get('type') == 'ws' else {}
-                          },
-                          "mux": {"enabled": True}
+                          }
                       }]
                   }
                   with open('xray_config.json', 'w') as f:
                       json.dump(config, f)
+                  print("Proxy configured.")
           except Exception as e:
               print(f"Error: {e}")
           EOF
@@ -80,20 +83,9 @@ jobs:
           ./xray -c xray_config.json > xray.log 2>&1 &
           sleep 3
 
-          # 3. Настройка TUN режима (как в Nekobox)
-          # Это заставит весь UDP трафик идти через прокси
-          sudo ip tuntap add mode tun dev tun0
-          sudo ip addr add 198.18.0.1/15 dev tun0
-          sudo ip link set dev tun0 up
-          
-          # Запуск tun2socks
-          sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 &
-          sleep 2
-          
-          # Направляем трафик в туннель
-          # ВНИМАНИЕ: Мы не меняем дефолтный роут, чтобы не потерять связь с GitHub,
-          # но DDNet теперь сможет юзать прокси более нативно.
-          # Для полной имитации Nekobox мы просто скажем DDNet юзать этот SOCKS.
+          # 3. Проверка прокси
+          echo "Checking IP..."
+          curl --socks5-hostname 127.0.0.1:1080 -s https://ifconfig.me || echo "Proxy Error"
 
       - name: Spawn & Control
         env:
@@ -106,11 +98,8 @@ jobs:
           sleep 2
           openbox &
           
-          # Проверка IP перед запуском
-          echo "Checking IP through SOCKS..."
-          curl --socks5-hostname 127.0.0.1:1080 -s https://ifconfig.me || echo "Proxy fail"
-
           cd ddnet_folder
+          # Используем встроенный прокси DDNet (направляем на локальный Xray)
           cat << EOF > bot.cfg
           cl_show_welcome 0
           cl_motd_time 0
@@ -122,14 +111,15 @@ jobs:
           logfile "/tmp/game.log"
           EOF
 
-          # Запуск
+          # Запуск игры
           ./DDNet -f bot.cfg > /dev/null 2>&1 &
           sleep 8
 
+          echo "--- MONITORING ---"
           LAST_ID="0"
           while true; do
             if [ -f "/tmp/game.log" ]; then
-                echo "--- STATUS ---"
+                echo "--- GAME LOG ---"
                 tail -n 3 /tmp/game.log
             fi
 
@@ -141,6 +131,7 @@ jobs:
                     TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
                     VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
                     
+                    echo "RECEIVED: $TYPE -> $VAL"
                     WID=$(xdotool search --class "DDNet" | head -n 1)
                     if [ ! -z "$WID" ]; then
                         xdotool windowactivate --sync $WID
