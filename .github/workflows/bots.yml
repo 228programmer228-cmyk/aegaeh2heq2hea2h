@@ -1,4 +1,4 @@
-name: DDNet Bot Army (Nekobox TUN Mode)
+name: DDNet Bot Army (Native Xray TUN)
 
 on:
   workflow_dispatch:
@@ -16,17 +16,11 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools unzip iptables
+          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools unzip iproute2
           
-          # Качаем Xray
+          # Качаем Xray (Он нам заменит и прокси, и tun2socks)
           curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
           unzip -o xray.zip && chmod +x xray
-          
-          # Качаем tun2socks
-          curl -L https://github.com/xjasonlyu/tun2socks/releases/latest/download/tun2socks-linux-amd64.zip -o t2s.zip
-          unzip -o t2s.zip
-          mv tun2socks-linux-amd64 tun2socks
-          chmod +x tun2socks
 
       - name: Download DDNet
         run: |
@@ -35,7 +29,7 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Setup VLESS Config
+      - name: Setup Xray Native TUN
         env:
           IDX: ${{ matrix.instance }}
         run: |
@@ -54,11 +48,22 @@ jobs:
                   u, hp = p.netloc.split('@')
                   addr, port = hp.split(':')
                   params = dict(urllib.parse.parse_qsl(p.query))
+                  
+                  # ИСПОЛЬЗУЕМ ВСТРОЕННЫЙ TUN XRAY (лучше чем tun2socks)
                   config = {
-                      "inbounds":[{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
+                      "log": {"loglevel": "warning"},
+                      "inbounds":[{
+                          "protocol": "tun",
+                          "settings": {
+                              "network": "tcp,udp",
+                              "address":["172.19.0.1/30", "fd00::1/126"],
+                              "autoRoute": False,
+                              "strictRoute": False
+                          }
+                      }],
                       "outbounds":[{
                           "protocol": "vless",
-                          "settings": {"vnext":[{"address": addr, "port": int(port), "users":[{"id": u, "encryption": "none"}]}]},
+                          "settings": {"vnext":[{"address": addr, "port": int(port), "users": [{"id": u, "encryption": "none"}]}]},
                           "streamSettings": {
                               "network": params.get('type', 'tcp'),
                               "security": params.get('security', 'none'),
@@ -76,7 +81,7 @@ jobs:
               print(f"Error: {e}")
           EOF
 
-      - name: Setup Transparent Proxy & Launch Army
+      - name: Launch Army
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
@@ -84,43 +89,41 @@ jobs:
           export DISPLAY=:99
           export LIBGL_ALWAYS_SOFTWARE=1
           
-          # Запуск экрана (флаг -ac отключает проверку прав xhost)
           Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset -ac &
           sleep 2
           openbox &
           
-          # 1. Запуск Xray (добавлен пробел после if)
+          # 1. Запуск Xray (от рута, чтобы он создал tun0)
           if [ -f "xray_config.json" ]; then
-            ./xray -c xray_config.json > xray.log 2>&1 &
-            sleep 3
+            sudo ./xray -c xray_config.json > xray.log 2>&1 &
+            sleep 4
           fi
 
-          # 2. Настраиваем прозрачный прокси (как Nekobox TUN Mode)
+          # 2. Настройка маршрутизации (Отправляем только бота в TUN)
           sudo useradd -m bot
-          sudo ip tuntap add mode tun dev tun0
-          sudo ip addr add 198.18.0.1/15 dev tun0
-          sudo ip link set dev tun0 up
+          BOT_UID=$(id -u bot)
           
-          # Отправляем весь трафик юзера "bot" в TUN интерфейс (кроме localhost)
-          sudo iptables -t mangle -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
-          sudo iptables -t mangle -A OUTPUT -m owner --uid-owner bot -j MARK --set-mark 1
-          sudo ip rule add fwmark 1 table 100
+          sudo ip link set dev tun0 up || echo "tun0 not found!"
+          
+          # IPv4 Rules
+          sudo ip rule add uidrange $BOT_UID-$BOT_UID to 127.0.0.0/8 lookup main priority 10
+          sudo ip rule add uidrange $BOT_UID-$BOT_UID lookup 100 priority 20
           sudo ip route add default dev tun0 table 100
           
-          # Запускаем tun2socks
-          sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > /dev/null 2>&1 &
-          sleep 2
+          # IPv6 Rules (чтобы IPv6 не утек мимо прокси)
+          sudo ip -6 rule add uidrange $BOT_UID-$BOT_UID to ::1/128 lookup main priority 10
+          sudo ip -6 rule add uidrange $BOT_UID-$BOT_UID lookup 100 priority 20
+          sudo ip -6 route add default dev tun0 table 100
 
-          # Проверка (Если "IP С ПРОКСИ" из другой страны — значит мы в дамках!)
-          echo "--- IP БЕЗ ПРОКСИ (GitHub) ---"
+          echo "--- IP БЕЗ ПРОКСИ ---"
           curl -s https://ifconfig.me || echo "Fail"
-          echo -e "\n--- IP С ПРОКСИ (Бот) ---"
-          sudo -u bot curl -s https://ifconfig.me || echo "Proxy Fail"
+          echo -e "\n--- IP С ПРОКСИ ---"
+          sudo -u bot curl -s --max-time 10 https://ifconfig.me || echo "Proxy Fail"
           echo -e "\n----------------------------"
 
-          # 3. Настройка и запуск DDNet от имени проксированного юзера
+          # 3. Настройка DDNet
           cd ddnet_folder
-          chmod -R 777 . # Даем юзеру права на папку игры
+          chmod -R 777 . 
           
           cat << EOF > bot.cfg
           cl_show_welcome 0
@@ -133,14 +136,14 @@ jobs:
 
           rm -f /tmp/game.log
           
-          # Запускаем игру как "bot" - весь её UDP-трафик 100% уйдет в туннель VLESS
+          # Запуск игры
           sudo -u bot DISPLAY=:99 ./DDNet -f bot.cfg > /dev/null 2>&1 &
           sleep 8
 
           echo "--- НАЧАЛО МОНИТОРИНГА ---"
           LAST_ID="0"
           while true; do
-            if [ -f "/tmp/game.log" ]; then
+            if[ -f "/tmp/game.log" ]; then
                 echo "--- СТАТУС ИГРЫ ---"
                 tail -n 3 /tmp/game.log
             fi
@@ -154,7 +157,7 @@ jobs:
                     VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
                     
                     WID=$(xdotool search --class "DDNet" | head -n 1)
-                    if [ ! -z "$WID" ]; then # И здесь добавлен пробел после if
+                    if[ ! -z "$WID" ]; then
                         xdotool windowactivate --sync $WID
                         sleep 0.5
                         if [ "$TYPE" == "connect" ]; then
@@ -162,7 +165,7 @@ jobs:
                             xdotool key ctrl+a BackSpace; sleep 0.2
                             xdotool type --delay 100 "connect $VAL"; sleep 0.3
                             xdotool key Return; sleep 0.2; xdotool key F1
-                        elif [ "$TYPE" == "chat" ]; then
+                        elif[ "$TYPE" == "chat" ]; then
                             xdotool key Escape; sleep 0.2; xdotool key t; sleep 0.5
                             xdotool type --delay 80 "$VAL"; xdotool key Return
                         fi
