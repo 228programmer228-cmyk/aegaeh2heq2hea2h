@@ -1,4 +1,4 @@
-name: DDNet Bot Army (Final Working Version)
+name: DDNet Bot Army (Fixed Spaces)
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools unzip iptables
           
-          # Отключаем IPv6, чтобы игра не пускала пакеты мимо туннеля
+          # Отключаем IPv6, чтобы пакеты не шли мимо туннеля
           sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
           sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
           
@@ -50,7 +50,7 @@ jobs:
           try:
               data = os.environ.get('RAW_DATA', '').strip()
               decoded = base64.b64decode(data).decode('utf-8')
-              proxies =[l.strip() for l in decoded.split('\n') if l.strip().startswith('vless://')]
+              proxies = [l.strip() for l in decoded.split('\n') if l.strip().startswith('vless://')]
               idx = int(os.environ.get('IDX')) - 1
               if idx < len(proxies):
                   link = proxies[idx]
@@ -59,10 +59,10 @@ jobs:
                   addr, port = hp.split(':')
                   params = dict(urllib.parse.parse_qsl(p.query))
                   config = {
-                      "inbounds":[{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
-                      "outbounds":[{
+                      "inbounds": [{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
+                      "outbounds": [{
                           "protocol": "vless",
-                          "settings": {"vnext":[{"address": addr, "port": int(port), "users": [{"id": u, "encryption": "none"}]}]},
+                          "settings": {"vnext": [{"address": addr, "port": int(port), "users": [{"id": u, "encryption": "none"}]}]},
                           "streamSettings": {
                               "network": params.get('type', 'tcp'),
                               "security": params.get('security', 'none'),
@@ -87,6 +87,7 @@ jobs:
           export DISPLAY=:99
           export LIBGL_ALWAYS_SOFTWARE=1
           
+          # Запуск экрана
           Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset -ac &
           sleep 2
           openbox &
@@ -96,14 +97,13 @@ jobs:
             sleep 3
           fi
 
-          # Setup tun2socks (Nekobox TUN Mode)
+          # Настройка tun2socks
           sudo useradd -m bot
           sudo ip tuntap add mode tun dev tun0
           sudo ip addr add 198.18.0.1/15 dev tun0
           sudo ip link set dev tun0 mtu 1280
           sudo ip link set dev tun0 up
           
-          # Направляем трафик только юзера bot в туннель
           sudo iptables -t mangle -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
           sudo iptables -t mangle -A OUTPUT -m owner --uid-owner bot -j MARK --set-mark 1
           sudo ip rule add fwmark 1 table 100
@@ -112,11 +112,9 @@ jobs:
           sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > /dev/null 2>&1 &
           sleep 2
 
-          echo "--- IP БЕЗ ПРОКСИ (GitHub) ---"
-          curl -s https://ifconfig.me || echo "Fail"
-          echo -e "\n--- IP С ПРОКСИ (Бот) ---"
-          sudo -u bot curl -s --max-time 10 https://ifconfig.me || echo "Proxy Fail"
-          echo -e "\n----------------------------"
+          echo "--- IP CHECK ---"
+          curl -s https://ifconfig.me || echo "GitHub IP fail"
+          sudo -u bot curl -s --max-time 10 https://ifconfig.me || echo "Proxy IP fail"
 
           cd ddnet_folder
           chmod -R 777 . 
@@ -132,16 +130,16 @@ jobs:
 
           rm -f /tmp/game.log
           
-          # Запуск DDNet от имени проксированного юзера "bot"
+          # Запуск игры от имени бота
           sudo -u bot DISPLAY=:99 ./DDNet -f bot.cfg > /dev/null 2>&1 &
           sleep 8
 
           echo "--- НАЧАЛО МОНИТОРИНГА ---"
           LAST_ID="0"
           while true; do
-            # Пробелы расставлены ИДЕАЛЬНО
-            if[ -f "/tmp/game.log" ]; then
-                echo "--- СТАТУС ИГРЫ ---"
+            # ИСПРАВЛЕНО: Добавлены все пробелы в [ ]
+            if [ -f "/tmp/game.log" ]; then
+                echo "--- STATUS ---"
                 tail -n 3 /tmp/game.log
             fi
 
@@ -149,28 +147,27 @@ jobs:
             if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
                 ID=$(echo "$RAW_RESPONSE" | jq -r '.id // 0')
                 
-                # Пробелы расставлены ИДЕАЛЬНО
-                if[ "$ID" != "$LAST_ID" ] && [ "$ID" != "0" ]; then
+                if [ "$ID" != "$LAST_ID" ] && [ "$ID" != "0" ]; then
                     LAST_ID=$ID
                     TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
                     VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
                     
+                    echo "CMD: $TYPE -> $VAL"
                     WID=$(xdotool search --class "DDNet" | head -n 1)
                     
-                    # Пробелы расставлены ИДЕАЛЬНО
-                    if [ ! -z "$WID" ]; then
+                    if [ -n "$WID" ]; then
                         xdotool windowactivate --sync $WID
                         sleep 0.5
                         
-                        # Пробелы расставлены ИДЕАЛЬНО
                         if [ "$TYPE" == "connect" ]; then
                             xdotool key F1; sleep 1.0
                             xdotool key ctrl+a BackSpace; sleep 0.2
-                            xdotool type --delay 100 "connect $VAL"; sleep 0.3
+                            xdotool type --delay 100 "connect $VAL"
                             xdotool key Return; sleep 0.2; xdotool key F1
-                        elif[ "$TYPE" == "chat" ]; then
+                        elif [ "$TYPE" == "chat" ]; then
                             xdotool key Escape; sleep 0.2; xdotool key t; sleep 0.5
-                            xdotool type --delay 80 "$VAL"; xdotool key Return
+                            xdotool type --delay 80 "$VAL"
+                            xdotool key Return
                         fi
                     fi
                 fi
