@@ -1,4 +1,4 @@
-name: DDNet Bot Army (Auto-VLESS & Log Fix)
+name: DDNet Bot Army (Fixed Auto-Fetch)
 
 on:
   workflow_dispatch:
@@ -27,24 +27,33 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Auto-Fetch VLESS and Setup Xray
+      - name: Fetch VLESS and Setup Xray
+        env:
+          INSTANCE_INDEX: ${{ matrix.instance }}
         run: |
-          # 1. Качаем базу прокси прямо с сайта
-          RAW_DATA=$(curl -sSL https://mifa.world/vless)
+          # Качаем данные с эмуляцией браузера
+          RAW_DATA=$(curl -sSL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" https://mifa.world/vless)
           
-          # 2. Python скрипт для обработки данных
+          # Передаем скачанные данные в Python через переменную окружения, чтобы избежать SyntaxError
+          export RAW_DATA="$RAW_DATA"
+          
           python3 - <<EOF
           import base64, json, os, urllib.parse
 
+          raw_b64 = os.environ.get('RAW_DATA', '').strip()
+
+          if not raw_b64 or "<!DOCTYPE" in raw_b64:
+              print("!!! ОШИБКА: Сайт вернул HTML вместо прокси или пустую строку.")
+              exit(0)
+
           try:
-              # Декодируем базу
-              decoded_data = base64.b64decode("$RAW_DATA").decode('utf-8')
+              decoded_data = base64.b64decode(raw_b64).decode('utf-8')
               proxies = [l.strip() for l in decoded_data.split('\n') if l.strip().startswith('vless://')]
               
-              idx = int("${{ matrix.instance }}") - 1
+              idx = int(os.environ.get('INSTANCE_INDEX', 1)) - 1
               if idx < len(proxies):
                   link = proxies[idx]
-                  print(f"Используем прокси #{idx+1} для инстанса ${{ matrix.instance }}")
+                  print(f"Используем прокси #{idx+1}")
                   
                   p = urllib.parse.urlparse(link)
                   u, hp = p.netloc.split('@')
@@ -70,9 +79,9 @@ jobs:
                   with open('xray_config.json', 'w') as f:
                       json.dump(config, f)
               else:
-                  print("Прокси закончились!")
+                  print("Прокси в списке закончились.")
           except Exception as e:
-              print(f"Ошибка при парсинге: {e}")
+              print(f"Ошибка декодирования: {e}")
           EOF
 
       - name: Run Bots with Logs
@@ -86,13 +95,11 @@ jobs:
           openbox & 
           sleep 1
 
-          # Запуск прокси
           if [ -f "xray_config.json" ]; then
             ./xray -c xray_config.json > xray_debug.log 2>&1 &
-            sleep 4
+            sleep 5
           fi
 
-          # Создаем конфиг DDNet
           mkdir -p ~/.local/share/ddnet
           cat << EOF > ~/.local/share/ddnet/settings.cfg
           cl_show_welcome 0
@@ -105,20 +112,16 @@ jobs:
           logfile "game.log"
           EOF
 
-          # Запуск DDNet
           cd ddnet_folder
           ./DDNet > ddnet_sys.log 2>&1 &
           
           echo "--- МОНИТОРИНГ ---"
           LAST_ID="0"
           
-          # Цикл на 15 минут
           for i in {1..180}; do
-            # ВЫВОД ЛОГОВ ИГРЫ (чтобы видеть статус подключения)
-            echo "--- СТАТУС DDNET ---"
-            tail -n 5 ~/.local/share/ddnet/game.log 2>/dev/null || echo "Лог еще не создан..."
+            echo "--- GAME LOG (Last 5 lines) ---"
+            tail -n 5 ~/.local/share/ddnet/game.log 2>/dev/null || echo "Waiting for log..."
 
-            # Проверка команд
             RAW_RESPONSE=$(curl -s --max-time 2 "$CONTROL_URL")
             if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
                 ID=$(echo "$RAW_RESPONSE" | jq -r '.id // 0')
@@ -126,22 +129,16 @@ jobs:
                   LAST_ID=$ID
                   TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
                   VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
-                  
-                  echo "ПРИНЯТА КОМАНДА: $TYPE -> $VAL"
+                  echo "CMD: $TYPE -> $VAL"
                   WID=$(xdotool search --class "DDNet" | head -n 1)
-                  
                   if [ ! -z "$WID" ]; then
                     xdotool windowactivate --sync $WID
                     if [ "$TYPE" == "connect" ]; then
-                      xdotool key --delay 50 F1
-                      sleep 0.5
-                      xdotool type --delay 20 "connect $VAL"
-                      xdotool key Return F1
+                      xdotool key F1; sleep 0.5
+                      xdotool type "connect $VAL"; xdotool key Return F1
                     elif [ "$TYPE" == "chat" ]; then
-                      xdotool key t
-                      sleep 0.2
-                      xdotool type --delay 20 "$VAL"
-                      xdotool key Return
+                      xdotool key t; sleep 0.2
+                      xdotool type "$VAL"; xdotool key Return
                     fi
                   fi
                 fi
