@@ -1,4 +1,4 @@
-name: DDNet Bot Army (TUN MODE FIXED)
+name: DDNet Bot Army (RANDOM PROXY & XUDP FIX)
 
 on:
   workflow_dispatch:
@@ -16,17 +16,10 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools unzip iptables iproute2
-          
-          # Отключаем IPv6, чтобы не было утечек
+          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools unzip iptables
           sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
-          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
-
-          # Качаем Xray
           curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
           unzip -o xray.zip && chmod +x xray
-          
-          # Качаем tun2socks
           curl -L https://github.com/xjasonlyu/tun2socks/releases/latest/download/tun2socks-linux-amd64.zip -o t2s.zip
           unzip -o t2s.zip && mv tun2socks-linux-amd64 tun2socks && chmod +x tun2socks
 
@@ -37,84 +30,78 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Setup VLESS & TUN
-        env:
-          IDX: ${{ matrix.instance }}
+      - name: Fetch Random VLESS & Setup Xray
         run: |
-          # 1. Тянем базу прокси
           RAW_DATA=$(curl -sSL -A "Mozilla/5.0" https://mifa.world/vless)
           export RAW_DATA="$RAW_DATA"
-          
           python3 - <<EOF
-          import base64, json, os, urllib.parse
+          import base64, json, os, urllib.parse, random
           try:
               data = os.environ.get('RAW_DATA', '').strip()
               decoded = base64.b64decode(data).decode('utf-8')
               proxies = [l.strip() for l in decoded.split('\n') if l.strip().startswith('vless://')]
-              idx = int(os.environ.get('IDX')) - 1
-              if idx < len(proxies):
-                  link = proxies[idx]
-                  p = urllib.parse.urlparse(link)
-                  u, hp = p.netloc.split('@')
-                  addr, port = hp.split(':')
-                  params = dict(urllib.parse.parse_qsl(p.query))
-                  config = {
-                      "inbounds": [{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
-                      "outbounds": [{
-                          "protocol": "vless",
-                          "settings": {"vnext": [{"address": addr, "port": int(port), "users": [{"id": u, "encryption": "none"}]}]},
-                          "streamSettings": {
-                              "network": params.get('type', 'tcp'),
-                              "security": params.get('security', 'none'),
-                              "realitySettings": {"serverName": params.get('sni',''), "publicKey": params.get('pbk',''), "fingerprint": params.get('fp','chrome'), "shortId": params.get('sid',''), "spiderX": params.get('spx','')} if params.get('security') == 'reality' else {},
-                              "grpcSettings": {"serviceName": params.get('serviceName', '')} if params.get('type') == 'grpc' else {},
-                              "wsSettings": {"path": params.get('path', '/')} if params.get('type') == 'ws' else {}
-                          }
-                      }]
-                  }
-                  with open('xray_config.json', 'w') as f:
-                      json.dump(config, f)
+              
+              # БЕРЕМ РАНДОМНЫЙ ПРОКСИ (чтобы не все сидели на одном ОАЭ)
+              link = random.choice(proxies)
+              print(f"Selected random proxy: {link[:50]}...")
+              
+              p = urllib.parse.urlparse(link)
+              u, hp = p.netloc.split('@')
+              addr, port = hp.split(':')
+              params = dict(urllib.parse.parse_qsl(p.query))
+              
+              config = {
+                  "inbounds": [{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
+                  "outbounds": [{
+                      "protocol": "vless",
+                      "settings": {"vnext": [{"address": addr, "port": int(port), "users": [{"id": u, "encryption": "none"}]}]},
+                      "streamSettings": {
+                          "network": params.get('type', 'tcp'),
+                          "security": params.get('security', 'none'),
+                          "realitySettings": {"serverName": params.get('sni',''), "publicKey": params.get('pbk',''), "fingerprint": params.get('fp','chrome'), "shortId": params.get('sid',''), "spiderX": params.get('spx','')} if params.get('security') == 'reality' else {},
+                          "grpcSettings": {"serviceName": params.get('serviceName', '')} if params.get('type') == 'grpc' else {},
+                          "wsSettings": {"path": params.get('path', '/')} if params.get('type') == 'ws' else {},
+                          # ПРИНУДИТЕЛЬНЫЙ XUDP (для игр)
+                          "sockopt": {"mark": 255, "tcpFastOpen": True}
+                      },
+                      "mux": {"enabled": False} # Мультиплекс часто ломает UDP, выключаем
+                  }]
+              }
+              with open('xray_config.json', 'w') as f:
+                  json.dump(config, f)
           except Exception as e:
               print(f"Error: {e}")
           EOF
 
-          # 2. Запуск прокси
-          ./xray -c xray_config.json > xray.log 2>&1 &
-          sleep 3
-
-          # 3. Настройка TUN (как в Nekobox)
-          sudo ip tuntap add mode tun dev tun0
-          sudo ip addr add 198.18.0.1/15 dev tun0
-          sudo ip link set dev tun0 up
-          
-          # Запускаем мост tun -> socks
-          sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > /dev/null 2>&1 &
-          sleep 2
-
-          # 4. UID Маршрутизация (Весь трафик юзера 'bot' в туннель)
-          sudo useradd -m bot
-          sudo iptables -t mangle -A OUTPUT -m owner --uid-owner bot -j MARK --set-mark 1
-          sudo ip rule add fwmark 1 table 100
-          sudo ip route add default dev tun0 table 100
-          
-          # Разрешаем 'bot' доступ к локальному дисплею
-          xhost +local:bot || true
-
-      - name: Run Bots
+      - name: Setup TUN & Run
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
           set +e
           export DISPLAY=:99
-          export LIBGL_ALWAYS_SOFTWARE=1
           Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset -ac &
           sleep 2
           openbox &
-          sleep 1
+          
+          ./xray -c xray_config.json > xray.log 2>&1 &
+          sleep 3
 
-          # Проверяем IP
-          echo "--- IP CHECK ---"
-          sudo -u bot curl -s --max-time 10 https://ifconfig.me || echo "Proxy Fail"
+          sudo useradd -m bot
+          sudo ip tuntap add mode tun dev tun0
+          sudo ip addr add 198.18.0.1/15 dev tun0
+          sudo ip link set dev tun0 mtu 1200 # Еще сильнее снижаем MTU для гарантии
+          sudo ip link set dev tun0 up
+          
+          sudo iptables -t mangle -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
+          sudo iptables -t mangle -A OUTPUT -m owner --uid-owner bot -j MARK --set-mark 1
+          sudo ip rule add fwmark 1 table 100
+          sudo ip route add default dev tun0 table 100
+          
+          sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > /dev/null 2>&1 &
+          sleep 2
+
+          echo "--- IP CHECK (SHOULD BE PROXY) ---"
+          sudo -u bot curl -s --max-time 10 https://ifconfig.me || echo "FAIL"
 
           cd ddnet_folder
           chmod -R 777 .
@@ -127,15 +114,14 @@ jobs:
           logfile "/tmp/game.log"
           EOF
 
-          # Запуск от имени бота (туннелирование 100%)
           sudo -u bot DISPLAY=:99 ./DDNet -f bot.cfg > /dev/null 2>&1 &
           sleep 8
 
-          echo "--- MONITORING ---"
+          echo "--- MONITORING START ---"
           LAST_ID="0"
           while true; do
             if [ -f "/tmp/game.log" ]; then
-                echo "--- GAME STATUS ---"
+                echo "--- GAME LOG ---"
                 tail -n 3 /tmp/game.log
             fi
 
@@ -147,19 +133,17 @@ jobs:
                     TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
                     VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
                     
-                    echo "COMMAND: $TYPE ($VAL)"
                     WID=$(xdotool search --class "DDNet" | head -n 1)
                     if [ -n "$WID" ]; then
                         xdotool windowactivate --sync $WID
-                        sleep 0.5
                         if [ "$TYPE" == "connect" ]; then
-                            xdotool key F1; sleep 1.0
+                            xdotool key F1; sleep 1.2
                             xdotool key ctrl+a BackSpace; sleep 0.2
-                            xdotool type --delay 100 "connect $VAL"; sleep 0.5
-                            xdotool key Return; sleep 0.2; xdotool key F1
+                            xdotool type --delay 100 "connect $VAL"
+                            xdotool key Return; sleep 0.3; xdotool key F1
                         elif [ "$TYPE" == "chat" ]; then
-                            xdotool key Escape; sleep 0.2; xdotool key t; sleep 0.5
-                            xdotool type --delay 100 "$VAL"; xdotool key Return
+                            xdotool key Escape; sleep 0.3; xdotool key t; sleep 0.5
+                            xdotool type --delay 80 "$VAL"; xdotool key Return
                         fi
                     fi
                 fi
