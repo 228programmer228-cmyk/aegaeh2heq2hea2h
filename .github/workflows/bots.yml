@@ -1,4 +1,4 @@
-name: DDNet Bot Army DEBUG MODE
+name: DDNet Bot Army (Auto-VLESS & Log Fix)
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3
+          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools
           curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
           unzip xray.zip && chmod +x xray
 
@@ -27,50 +27,55 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Setup VLESS & Debug Logs
+      - name: Auto-Fetch VLESS and Setup Xray
         run: |
-          # Вставляем список прокси (сокращено для примера, вставь свои 155 штук сюда)
-          cat << 'EOF' > all_proxies.txt
-          vless://9a21263b-1af0-41ec-9d3a-2afda61606dc@78.17.76.197:47640?type=tcp&headerType=none&security=reality&encryption=none&sni=www.nvidia.com&fp=chrome&pbk=ks2xxgXE4JO2nYBdbxliHfvy5OEd6zdjE9UWNXJy4m4&sid=bec61d2ccb&spx=%2F
-          vless://8f59feef-aab9-4e0b-924c-2a31bb8f446f@138.124.6.159:30086?type=grpc&headerType=none&security=none&encryption=none&serviceName=gprc&mode=gun
-          vless://8f59feef-aab9-4e0b-924c-2a31bb8f446f@138.124.6.159:39800?type=xhttp&headerType=none&security=reality&encryption=none&sni=apple.com&fp=chrome&pbk=bpHDYJWkA0h_nOqRBLUbuJJXfqmIZIMGcv07zcFpdCs&sid=dc27d60c096413b5&path=%2F&mode=auto
-          EOF
-
-          python3 - <<EOF
-          import json, os, urllib.parse
-          with open('all_proxies.txt') as f:
-              proxies = [l.strip() for l in f if l.strip().startswith('vless://')]
+          # 1. Качаем базу прокси прямо с сайта
+          RAW_DATA=$(curl -sSL https://mifa.world/vless)
           
-          idx = int("${{ matrix.instance }}") - 1
-          if idx < len(proxies):
-              link = proxies[idx]
-              p = urllib.parse.urlparse(link)
-              u, hp = p.netloc.split('@')
-              addr, port = hp.split(':')
-              params = dict(urllib.parse.parse_qsl(p.query))
+          # 2. Python скрипт для обработки данных
+          python3 - <<EOF
+          import base64, json, os, urllib.parse
+
+          try:
+              # Декодируем базу
+              decoded_data = base64.b64decode("$RAW_DATA").decode('utf-8')
+              proxies = [l.strip() for l in decoded_data.split('\n') if l.strip().startswith('vless://')]
               
-              config = {
-                  "log": {"loglevel": "debug"},
-                  "inbounds": [{"port": 1080, "protocol": "socks", "settings": {"udp": True, "auth": "noauth"}}],
-                  "outbounds": [{
-                      "protocol": "vless",
-                      "settings": {"vnext": [{"address": addr, "port": int(port), "users": [{"id": u, "encryption": "none"}]}]},
-                      "streamSettings": {
-                          "network": params.get('type', 'tcp'),
-                          "security": params.get('security', 'none'),
-                          "realitySettings": {"serverName": params.get('sni',''), "publicKey": params.get('pbk',''), "fingerprint": params.get('fp','chrome'), "shortId": params.get('sid',''), "spiderX": params.get('spx','')} if params.get('security') == 'reality' else {},
-                          "grpcSettings": {"serviceName": params.get('serviceName', '')} if params.get('type') == 'grpc' else {},
-                          "wsSettings": {"path": params.get('path', '/'), "headers": {"Host": params.get('host', '')}} if params.get('type') == 'ws' else {},
-                          "xhttpSettings": {"path": params.get('path', '/'), "host": params.get('host', ''), "mode": params.get('mode', 'auto')} if params.get('type') == 'xhttp' else {}
-                      },
-                      "mux": {"enabled": True}
-                  }]
-              }
-              with open('xray_config.json', 'w') as f:
-                  json.dump(config, f)
+              idx = int("${{ matrix.instance }}") - 1
+              if idx < len(proxies):
+                  link = proxies[idx]
+                  print(f"Используем прокси #{idx+1} для инстанса ${{ matrix.instance }}")
+                  
+                  p = urllib.parse.urlparse(link)
+                  u, hp = p.netloc.split('@')
+                  addr, port = hp.split(':')
+                  params = dict(urllib.parse.parse_qsl(p.query))
+                  
+                  config = {
+                      "log": {"loglevel": "warning"},
+                      "inbounds": [{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
+                      "outbounds": [{
+                          "protocol": "vless",
+                          "settings": {"vnext": [{"address": addr, "port": int(port), "users": [{"id": u, "encryption": "none"}]}]},
+                          "streamSettings": {
+                              "network": params.get('type', 'tcp'),
+                              "security": params.get('security', 'none'),
+                              "realitySettings": {"serverName": params.get('sni',''), "publicKey": params.get('pbk',''), "fingerprint": params.get('fp','chrome'), "shortId": params.get('sid',''), "spiderX": params.get('spx','')} if params.get('security') == 'reality' else {},
+                              "grpcSettings": {"serviceName": params.get('serviceName', '')} if params.get('type') == 'grpc' else {},
+                              "wsSettings": {"path": params.get('path', '/'), "headers": {"Host": params.get('host', '')}} if params.get('type') == 'ws' else {},
+                              "xhttpSettings": {"path": params.get('path', '/'), "host": params.get('host', ''), "mode": params.get('mode', 'auto')} if params.get('type') == 'xhttp' else {}
+                          }
+                      }]
+                  }
+                  with open('xray_config.json', 'w') as f:
+                      json.dump(config, f)
+              else:
+                  print("Прокси закончились!")
+          except Exception as e:
+              print(f"Ошибка при парсинге: {e}")
           EOF
 
-      - name: Run Bots with Real-time Logs
+      - name: Run Bots with Logs
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
@@ -81,38 +86,38 @@ jobs:
           openbox & 
           sleep 1
 
-          # 1. Запуск Xray и вывод его логов в фоне
+          # Запуск прокси
           if [ -f "xray_config.json" ]; then
-            echo "--- STARTING XRAY DEBUG ---"
-            ./xray -c xray_config.json > xray.log 2>&1 &
-            sleep 5
-            echo "Xray status:"
-            netstat -tulpen | grep 1080 || echo "WARNING: SOCKS5 PORT NOT OPEN"
-            PROXY_CFG="cl_proxy_address 127.0.0.1
-          cl_proxy_port 1080"
+            ./xray -c xray_config.json > xray_debug.log 2>&1 &
+            sleep 4
           fi
 
-          # 2. Запуск DDNet
-          cd ddnet_folder
-          for i in {1..1}; do
-            cat << EOF > "bot.cfg"
+          # Создаем конфиг DDNet
+          mkdir -p ~/.local/share/ddnet
+          cat << EOF > ~/.local/share/ddnet/settings.cfg
           cl_show_welcome 0
+          cl_motd_time 0
+          gfx_screen_width 640
+          gfx_screen_height 480
           player_name "Panda_${{ matrix.instance }}"
-          $PROXY_CFG
-          logfile "bot.log"
+          cl_proxy_address 127.0.0.1
+          cl_proxy_port 1080
+          logfile "game.log"
           EOF
-            ./DDNet -f "bot.cfg" > ddnet_stdout.log 2>&1 &
-          done
 
-          echo "--- БОТЫ ЗАПУЩЕНЫ. МОНИТОРИНГ ЛОГОВ ---"
+          # Запуск DDNet
+          cd ddnet_folder
+          ./DDNet > ddnet_sys.log 2>&1 &
           
-          # Цикл управления + вывод логов
+          echo "--- МОНИТОРИНГ ---"
           LAST_ID="0"
-          for i in {1..600}; do # Работает 10 минут
-            # Выводим последние 3 строки лога игры, чтобы видеть статус подключения
-            echo "--- GAME LOG ---"
-            tail -n 3 bot.log 2>/dev/null
-            
+          
+          # Цикл на 15 минут
+          for i in {1..180}; do
+            # ВЫВОД ЛОГОВ ИГРЫ (чтобы видеть статус подключения)
+            echo "--- СТАТУС DDNET ---"
+            tail -n 5 ~/.local/share/ddnet/game.log 2>/dev/null || echo "Лог еще не создан..."
+
             # Проверка команд
             RAW_RESPONSE=$(curl -s --max-time 2 "$CONTROL_URL")
             if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
@@ -121,18 +126,21 @@ jobs:
                   LAST_ID=$ID
                   TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
                   VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
-                  echo "RECEIVED COMMAND: $TYPE -> $VAL"
                   
+                  echo "ПРИНЯТА КОМАНДА: $TYPE -> $VAL"
                   WID=$(xdotool search --class "DDNet" | head -n 1)
+                  
                   if [ ! -z "$WID" ]; then
                     xdotool windowactivate --sync $WID
                     if [ "$TYPE" == "connect" ]; then
-                      xdotool key F1
-                      xdotool type "connect $VAL"
+                      xdotool key --delay 50 F1
+                      sleep 0.5
+                      xdotool type --delay 20 "connect $VAL"
                       xdotool key Return F1
                     elif [ "$TYPE" == "chat" ]; then
                       xdotool key t
-                      xdotool type "$VAL"
+                      sleep 0.2
+                      xdotool type --delay 20 "$VAL"
                       xdotool key Return
                     fi
                   fi
