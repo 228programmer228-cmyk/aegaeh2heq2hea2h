@@ -1,4 +1,4 @@
-name: DDNet Bot Army (Vulkan Fix & Debug)
+name: DDNet Bot Army ALWAYS WORKING
 
 on:
   workflow_dispatch:
@@ -8,7 +8,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        instance:[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        # Обязательно пробел после двоеточия!
+        instance: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     
     runs-on: ubuntu-latest
     
@@ -16,8 +17,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          # Добавлены mesa-utils и libvulkan1 на случай фолбека
-          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools mesa-utils libvulkan1
+          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools
           curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
           unzip xray.zip && chmod +x xray
 
@@ -28,42 +28,38 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Fetch VLESS and Setup Xray
+      - name: Fetch Proxy from MIFA
         env:
-          INSTANCE_INDEX: ${{ matrix.instance }}
+          IDX: ${{ matrix.instance }}
         run: |
-          RAW_DATA=$(curl -sSL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" https://mifa.world/vless)
+          # Качаем базу прокси
+          RAW_DATA=$(curl -sSL -A "Mozilla/5.0" https://mifa.world/vless)
           export RAW_DATA="$RAW_DATA"
           
           python3 - <<EOF
           import base64, json, os, urllib.parse
-
-          raw_b64 = os.environ.get('RAW_DATA', '').strip()
-
-          if not raw_b64 or "<!DOCTYPE" in raw_b64:
-              print("!!! ОШИБКА: Сайт вернул HTML. Прокси не загружены.")
-              exit(0)
-
           try:
-              decoded_data = base64.b64decode(raw_b64).decode('utf-8')
-              proxies =[l.strip() for l in decoded_data.split('\n') if l.strip().startswith('vless://')]
+              data = os.environ.get('RAW_DATA', '').strip()
+              if not data or "<!DOCTYPE" in data:
+                  print("Error fetching proxies")
+                  exit(0)
               
-              idx = int(os.environ.get('INSTANCE_INDEX', 1)) - 1
+              decoded = base64.b64decode(data).decode('utf-8')
+              proxies = [l.strip() for l in decoded.split('\n') if l.strip().startswith('vless://')]
+              
+              idx = int(os.environ.get('IDX')) - 1
               if idx < len(proxies):
                   link = proxies[idx]
-                  print(f"Используем прокси #{idx+1}")
-                  
                   p = urllib.parse.urlparse(link)
                   u, hp = p.netloc.split('@')
                   addr, port = hp.split(':')
                   params = dict(urllib.parse.parse_qsl(p.query))
                   
                   config = {
-                      "log": {"loglevel": "warning"},
-                      "inbounds":[{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
+                      "inbounds": [{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
                       "outbounds": [{
                           "protocol": "vless",
-                          "settings": {"vnext":[{"address": addr, "port": int(port), "users":[{"id": u, "encryption": "none"}]}]},
+                          "settings": {"vnext": [{"address": addr, "port": int(port), "users": [{"id": u, "encryption": "none"}]}]},
                           "streamSettings": {
                               "network": params.get('type', 'tcp'),
                               "security": params.get('security', 'none'),
@@ -76,11 +72,12 @@ jobs:
                   }
                   with open('xray_config.json', 'w') as f:
                       json.dump(config, f)
+                  print("Proxy configured")
           except Exception as e:
-              print(f"Ошибка декодирования: {e}")
+              print(f"Failed: {e}")
           EOF
 
-      - name: Run Bots with Logs
+      - name: Spawn & Control Army
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
@@ -88,71 +85,68 @@ jobs:
           export DISPLAY=:99
           export LIBGL_ALWAYS_SOFTWARE=1
           
-          Xvfb :99 -screen 0 640x480x24 +extension GLX +render -noreset &
+          # Запуск экрана
+          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset &
           sleep 2
           openbox & 
           sleep 1
 
+          # Запуск прокси
           if [ -f "xray_config.json" ]; then
-            ./xray -c xray_config.json > xray_debug.log 2>&1 &
+            ./xray -c xray_config.json > /dev/null 2>&1 &
             sleep 3
+            PROXY_CFG="cl_proxy_address 127.0.0.1
+          cl_proxy_port 1080"
+          else
+            PROXY_CFG=""
           fi
 
-          # Создаем конфиг игры с отключением звука и принудительным OpenGL
+          # Твоя оригинальная логика создания ботов
           cd ddnet_folder
           cat << EOF > bot.cfg
           cl_show_welcome 0
           cl_motd_time 0
           gfx_screen_width 640
           gfx_screen_height 480
-          gfx_backend "OpenGL"
-          snd_enable 0
-          cl_dummy 1
           player_name "Panda_${{ matrix.instance }}"
-          cl_proxy_address 127.0.0.1
-          cl_proxy_port 1080
-          logfile "/tmp/game.log"
+          snd_enable 0
+          $PROXY_CFG
+          logfile "game.log"
           EOF
 
-          echo "Запускаем DDNet..."
-          # Запускаем игру и пишем СИСТЕМНЫЙ лог в ddnet_sys.log
-          ./DDNet -f bot.cfg > ddnet_sys.log 2>&1 &
-          sleep 5
-          
+          # Запуск
+          ./DDNet -f bot.cfg > /dev/null 2>&1 &
+          sleep 10
+
           echo "--- МОНИТОРИНГ ---"
           LAST_ID="0"
-          
-          for i in {1..180}; do
-            # Если игра упала, файла /tmp/game.log не будет.
-            if[ -f "/tmp/game.log" ]; then
-              echo "--- СТАТУС ПОДКЛЮЧЕНИЯ ---"
-              tail -n 5 /tmp/game.log
-            else
-              echo "!!! ОШИБКА: ИГРА ВЫЛЕТЕЛА. ВЫВОЖУ СИСТЕМНЫЙ ЛОГ !!!"
-              tail -n 15 ddnet_sys.log
-            fi
+          while true; do
+            # Выводим лог игры для отладки
+            echo "--- GAME STATUS ---"
+            tail -n 3 game.log 2>/dev/null || echo "Starting..."
 
-            RAW_RESPONSE=$(curl -s --max-time 2 "$CONTROL_URL")
+            RAW_RESPONSE=$(curl -s --max-time 1 "$CONTROL_URL")
             if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
                 ID=$(echo "$RAW_RESPONSE" | jq -r '.id // 0')
                 if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
                   LAST_ID=$ID
                   TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
                   VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
-                  echo "CMD: $TYPE -> $VAL"
-                  WID=$(xdotool search --class "DDNet" | head -n 1)
                   
-                  if[ ! -z "$WID" ]; then
+                  WID=$(xdotool search --class "DDNet" | head -n 1)
+                  if [ ! -z "$WID" ]; then
                     xdotool windowactivate --sync $WID
-                    if[ "$TYPE" == "connect" ]; then
-                      xdotool key F1; sleep 0.5
-                      xdotool type --delay 10 "connect $VAL"; xdotool key Return F1
-                    elif[ "$TYPE" == "chat" ]; then
-                      xdotool key t; sleep 0.2
-                      xdotool type --delay 10 "$VAL"; xdotool key Return
+                    if [ "$TYPE" == "connect" ]; then
+                      xdotool key F1
+                      sleep 0.2
+                      xdotool type "connect $VAL"
+                      xdotool key Return F1
+                    elif [ "$TYPE" == "chat" ]; then
+                      xdotool key t
+                      sleep 0.2
+                      xdotool type "$VAL"
+                      xdotool key Return
                     fi
-                  else
-                    echo "ОКНО DDNet НЕ НАЙДЕНО!"
                   fi
                 fi
             fi
