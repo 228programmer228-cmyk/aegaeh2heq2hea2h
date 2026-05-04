@@ -1,4 +1,4 @@
-name: DDNet Bot Army (RANDOM PROXY & XUDP FIX)
+name: DDNet Bot Army (Validated Proxy & XUDP Fix)
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools unzip iptables
+          sudo apt-get install -y xvfb xdotool jq libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox python3 net-tools unzip iptables iproute2 ca-certificates
           sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
           curl -L https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
           unzip -o xray.zip && chmod +x xray
@@ -30,78 +30,247 @@ jobs:
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Fetch Random VLESS & Setup Xray
+      - name: Fetch VLESS Candidates
         run: |
           RAW_DATA=$(curl -sSL -A "Mozilla/5.0" https://mifa.world/vless)
           export RAW_DATA="$RAW_DATA"
           python3 - <<EOF
-          import base64, json, os, urllib.parse, random
+          import base64, json, os, sys, urllib.parse
+
+          def parse_bool(value):
+              return str(value).lower() in {"1", "true", "yes"}
+
+          def build_stream_settings(params):
+              network = params.get("type", "tcp")
+              security = params.get("security", "none")
+              stream = {
+                  "network": network,
+                  "security": security,
+                  "sockopt": {"tcpFastOpen": True}
+              }
+
+              if security == "reality":
+                  stream["realitySettings"] = {
+                      "serverName": params.get("sni") or params.get("serverName", ""),
+                      "publicKey": params.get("pbk", ""),
+                      "fingerprint": params.get("fp", "chrome"),
+                      "shortId": params.get("sid", ""),
+                      "spiderX": urllib.parse.unquote(params.get("spx", "/"))
+                  }
+              elif security == "tls":
+                  tls_settings = {}
+                  server_name = params.get("sni") or params.get("host") or params.get("serverName")
+                  if server_name:
+                      tls_settings["serverName"] = server_name
+                  alpn = params.get("alpn")
+                  if alpn:
+                      tls_settings["alpn"] = [item.strip() for item in alpn.split(",") if item.strip()]
+                  if "allowInsecure" in params:
+                      tls_settings["allowInsecure"] = parse_bool(params.get("allowInsecure"))
+                  if "insecure" in params:
+                      tls_settings["allowInsecure"] = parse_bool(params.get("insecure"))
+                  if tls_settings:
+                      stream["tlsSettings"] = tls_settings
+
+              if network == "ws":
+                  headers = {}
+                  host = params.get("host")
+                  if host:
+                      headers["Host"] = host
+                  stream["wsSettings"] = {
+                      "path": urllib.parse.unquote(params.get("path", "/")) or "/",
+                      "headers": headers
+                  }
+              elif network == "grpc":
+                  grpc_settings = {
+                      "serviceName": params.get("serviceName", "")
+                  }
+                  authority = params.get("authority")
+                  if authority:
+                      grpc_settings["authority"] = authority
+                  mode = params.get("mode")
+                  if mode == "multi":
+                      grpc_settings["multiMode"] = True
+                  stream["grpcSettings"] = grpc_settings
+
+              return stream
+
           try:
               data = os.environ.get('RAW_DATA', '').strip()
+              if not data:
+                  raise RuntimeError("Proxy list is empty")
+
               decoded = base64.b64decode(data).decode('utf-8')
               proxies = [l.strip() for l in decoded.split('\n') if l.strip().startswith('vless://')]
-              
-              # БЕРЕМ РАНДОМНЫЙ ПРОКСИ (чтобы не все сидели на одном ОАЭ)
-              link = random.choice(proxies)
-              print(f"Selected random proxy: {link[:50]}...")
-              
-              p = urllib.parse.urlparse(link)
-              u, hp = p.netloc.split('@')
-              addr, port = hp.split(':')
-              params = dict(urllib.parse.parse_qsl(p.query))
-              
-              config = {
-                  "inbounds": [{"port": 1080, "protocol": "socks", "settings": {"udp": True}}],
-                  "outbounds": [{
-                      "protocol": "vless",
-                      "settings": {"vnext": [{"address": addr, "port": int(port), "users": [{"id": u, "encryption": "none"}]}]},
-                      "streamSettings": {
-                          "network": params.get('type', 'tcp'),
-                          "security": params.get('security', 'none'),
-                          "realitySettings": {"serverName": params.get('sni',''), "publicKey": params.get('pbk',''), "fingerprint": params.get('fp','chrome'), "shortId": params.get('sid',''), "spiderX": params.get('spx','')} if params.get('security') == 'reality' else {},
-                          "grpcSettings": {"serviceName": params.get('serviceName', '')} if params.get('type') == 'grpc' else {},
-                          "wsSettings": {"path": params.get('path', '/')} if params.get('type') == 'ws' else {},
-                          # ПРИНУДИТЕЛЬНЫЙ XUDP (для игр)
-                          "sockopt": {"mark": 255, "tcpFastOpen": True}
-                      },
-                      "mux": {"enabled": False} # Мультиплекс часто ломает UDP, выключаем
-                  }]
-              }
-              with open('xray_config.json', 'w') as f:
-                  json.dump(config, f)
+
+              if not proxies:
+                  raise RuntimeError("No vless:// links found in decoded payload")
+
+              candidates = []
+              seen = set()
+
+              for link in proxies:
+                  try:
+                      p = urllib.parse.urlparse(link)
+                      if '@' not in p.netloc:
+                          continue
+
+                      user_id, host_port = p.netloc.rsplit('@', 1)
+                      if ':' not in host_port:
+                          continue
+
+                      addr, port = host_port.rsplit(':', 1)
+                      params = dict(urllib.parse.parse_qsl(p.query))
+                      key = (
+                          addr,
+                          port,
+                          params.get("type", "tcp"),
+                          params.get("security", "none"),
+                          params.get("sni", ""),
+                          params.get("pbk", ""),
+                          params.get("sid", ""),
+                          params.get("serviceName", ""),
+                          params.get("path", "")
+                      )
+                      if key in seen:
+                          continue
+                      seen.add(key)
+
+                      user = {"id": user_id, "encryption": "none"}
+                      flow = params.get("flow")
+                      if flow:
+                          user["flow"] = flow
+
+                      config = {
+                          "log": {"loglevel": "warning"},
+                          "inbounds": [{
+                              "listen": "127.0.0.1",
+                              "port": 1080,
+                              "protocol": "socks",
+                              "settings": {"auth": "noauth", "udp": True}
+                          }],
+                          "outbounds": [{
+                              "protocol": "vless",
+                              "settings": {
+                                  "vnext": [{
+                                      "address": addr,
+                                      "port": int(port),
+                                      "users": [user]
+                                  }]
+                              },
+                              "streamSettings": build_stream_settings(params),
+                              "mux": {"enabled": False}
+                          }]
+                      }
+                      candidates.append({
+                          "label": f"{addr}:{port} {params.get('type', 'tcp')} {params.get('security', 'none')}",
+                          "config": config
+                      })
+                  except Exception:
+                      continue
+
+              if not candidates:
+                  raise RuntimeError("No valid VLESS candidates could be parsed")
+
+              with open("proxy_candidates.json", "w", encoding="utf-8") as f:
+                  json.dump(candidates, f)
+
+              print(f"Prepared {len(candidates)} VLESS candidates")
           except Exception as e:
               print(f"Error: {e}")
+              sys.exit(1)
           EOF
 
       - name: Setup TUN & Run
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
-          set +e
+          set -euo pipefail
           export DISPLAY=:99
           Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset -ac &
           sleep 2
           openbox &
-          
-          ./xray -c xray_config.json > xray.log 2>&1 &
-          sleep 3
 
-          sudo useradd -m bot
+          sudo useradd -m bot 2>/dev/null || true
+          sudo pkill -x tun2socks 2>/dev/null || true
+          pkill -x xray 2>/dev/null || true
+          sudo ip link del tun0 2>/dev/null || true
+          sudo ip rule del fwmark 1 table 100 2>/dev/null || true
+          sudo iptables -t mangle -D OUTPUT -m owner --uid-owner bot -j MARK --set-mark 1 2>/dev/null || true
+          sudo iptables -t mangle -D OUTPUT -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true
+
           sudo ip tuntap add mode tun dev tun0
           sudo ip addr add 198.18.0.1/15 dev tun0
-          sudo ip link set dev tun0 mtu 1200 # Еще сильнее снижаем MTU для гарантии
+          sudo ip link set dev tun0 mtu 1280
           sudo ip link set dev tun0 up
-          
+
           sudo iptables -t mangle -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
           sudo iptables -t mangle -A OUTPUT -m owner --uid-owner bot -j MARK --set-mark 1
           sudo ip rule add fwmark 1 table 100
           sudo ip route add default dev tun0 table 100
-          
-          sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > /dev/null 2>&1 &
-          sleep 2
+
+          python3 - <<'EOF'
+          import json
+          with open("proxy_candidates.json", "r", encoding="utf-8") as f:
+              candidates = json.load(f)
+          for idx, candidate in enumerate(candidates[:20], start=1):
+              with open(f"xray_config_{idx}.json", "w", encoding="utf-8") as out:
+                  json.dump(candidate["config"], out)
+              print(f"{idx}\t{candidate['label']}")
+          EOF
+
+          PROXY_READY=0
+          for cfg in xray_config_*.json; do
+            [ -e "$cfg" ] || break
+
+            echo "--- TRYING $(basename "$cfg") ---"
+            pkill -x xray 2>/dev/null || true
+            sudo pkill -x tun2socks 2>/dev/null || true
+            rm -f xray.log tun2socks.log
+
+            ./xray -c "$cfg" > xray.log 2>&1 &
+            sleep 4
+
+            if ! curl --silent --show-error --fail --max-time 12 --socks5-hostname 127.0.0.1:1080 https://ifconfig.me/ip > proxy_ip.txt; then
+              echo "SOCKS test failed for $(basename "$cfg")"
+              tail -n 20 xray.log || true
+              continue
+            fi
+
+            echo "SOCKS IP: $(cat proxy_ip.txt)"
+
+            if ! curl --silent --show-error --fail --max-time 20 --socks5-hostname 127.0.0.1:1080 https://master4.ddnet.org/ddnet/15/servers.json > /tmp/servers.json; then
+              echo "DDNet HTTPS test failed for $(basename "$cfg")"
+              tail -n 20 xray.log || true
+              continue
+            fi
+
+            sudo ./tun2socks -device tun0 -proxy socks5://127.0.0.1:1080 -interface eth0 > tun2socks.log 2>&1 &
+            sleep 4
+
+            if ! sudo -u bot curl --silent --show-error --fail --max-time 20 https://ifconfig.me/ip > routed_ip.txt; then
+              echo "TUN routing test failed for $(basename "$cfg")"
+              tail -n 20 xray.log || true
+              tail -n 20 tun2socks.log || true
+              sudo pkill -x tun2socks 2>/dev/null || true
+              continue
+            fi
+
+            echo "TUN IP: $(cat routed_ip.txt)"
+            cp "$cfg" xray_config.json
+            PROXY_READY=1
+            break
+          done
+
+          if [ "$PROXY_READY" -ne 1 ]; then
+            echo "No working proxy candidate found"
+            tail -n 40 xray.log || true
+            tail -n 40 tun2socks.log || true
+            exit 1
+          fi
 
           echo "--- IP CHECK (SHOULD BE PROXY) ---"
-          sudo -u bot curl -s --max-time 10 https://ifconfig.me || echo "FAIL"
+          sudo -u bot curl --silent --show-error --fail --max-time 10 https://ifconfig.me/ip
 
           cd ddnet_folder
           chmod -R 777 .
