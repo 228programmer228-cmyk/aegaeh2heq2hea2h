@@ -1,48 +1,50 @@
-name: CI-Debug
+name: 20_Cloudflare_RDP
 on: workflow_dispatch
 
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Список номеров машин от 1 до 20
+        id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+
     steps:
-      - name: Preparing Environment
+      - name: Configure RDP
         shell: pwsh
         run: |
-          # Устанавливаем пароль
-          $Password = "YourStrongPass123!"
-          $User = "runneradmin"
-          $PasswordSecure = ConvertTo-SecureString $Password -AsPlainText -Force
-          Set-LocalUser -Name $User -Password $PasswordSecure
-          
-          # Включаем RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          $password = ConvertTo-SecureString "Password123!" -AsPlainText -Force
+          Set-LocalUser -Name "runneradmin" -Password $password
 
-      - name: Install Tunnel
+      - name: Install Cloudflared
         shell: pwsh
-        run: |
-          # Используем Chocolatey для установки ngrok, чтобы не качать экшены
-          choco install ngrok
-          
+        run: choco install cloudflared -y
+
       - name: Start Tunnel
         shell: pwsh
-        env:
-          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          ngrok authtoken $env:NGROK_AUTH_TOKEN
-          # Запуск в фоновом режиме через старт-процесс
-          Start-Process ngrok -ArgumentList "tcp 3389"
+          # Запускаем туннель и записываем логи в файл, чтобы достать ссылку
+          Start-Process cloudflared -ArgumentList "tunnel --url tcp://localhost:3389" -RedirectStandardError "cloudflared.log"
           
-          # Ждем немного, чтобы туннель поднялся, и выводим адрес
-          Start-Sleep -Seconds 10
-          $tunnels = Invoke-RestMethod -Uri http://localhost:4040/api/tunnels
-          Write-Host "--- ПОДКЛЮЧАЙСЯ ТУТ: ---"
-          Write-Host $tunnels.tunnels.public_url
-          Write-Host "------------------------"
+          # Ждем генерации ссылки
+          Start-Sleep -Seconds 15
+          
+          # Достаем ссылку из логов
+          $log = Get-Content cloudflared.log
+          $url = $log | Select-String -Pattern "https://.*trycloudflared.com" | ForEach-Object { $_.Matches.Value }
+          
+          Write-Host "---------------------------------------"
+          Write-Host "МАШИНА №${{ matrix.id }}"
+          Write-Host "ССЫЛКА ДЛЯ ПОДКЛЮЧЕНИЯ: $url"
+          Write-Host "Логин: runneradmin"
+          Write-Host "Пароль: Password123!"
+          Write-Host "---------------------------------------"
 
       - name: Keep Alive
         shell: pwsh
         run: |
-          # Не даем виртуалке выключиться 6 часов
           while ($true) { Start-Sleep -Seconds 3600 }
