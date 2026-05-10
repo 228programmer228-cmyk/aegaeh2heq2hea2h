@@ -1,11 +1,12 @@
-name: 20_MACHINES_FIXED
+name: 20_MACHINES_FINAL
 
 on:
   workflow_dispatch:
 
 jobs:
   execute:
-    runs-on: ubuntu-latest
+    # Используем 20.04 — там лучше поддержка старых x86 файлов
+    runs-on: ubuntu-20.04 
     timeout-minutes: 360
     strategy:
       matrix:
@@ -18,32 +19,31 @@ jobs:
         with:
           lfs: true
 
-      - name: Install 32-bit support # ЭТО ДОЛЖНО ПОМОЧЬ
+      - name: Install 32-bit libs
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y libc6:i386 libncurses5:i386 libstdc++6:i386 libssl-dev:i386
+          # Ставим базовый набор для x86. Если чего-то не хватит, ldd покажет
+          sudo apt-get install -y libc6:i386 libncurses5:i386 libstdc++6:i386 zlib1g:i386
 
       - name: Run x86
         run: |
           chmod +x ./x86
           
-          # Проверка зависимостей (выведет в лог, чего не хватает)
-          ldd ./x86 || echo "Не бинарник или нет зависимостей"
-
+          echo "--- ПРОВЕРКА ЗАВИСИМОСТЕЙ ---"
+          ldd ./x86 || true
+          
           echo "Машина №${{ matrix.id }} погнала"
 
-          # Запуск в бесконечном цикле: если упадет - перезапустится
-          # Это поможет, если он вылетает периодически
-          while true; do
-            echo "--- Старт процесса ---"
+          # Запуск в цикле: если упадет с Trace/breakpoint trap — сразу поднимется
+          (while true; do
             ./x86
-            echo "--- Процесс упал с кодом $?, рестарт через 5 сек ---"
-            sleep 5
-          done &
+            echo "Вылет... рестарт через 3 сек"
+            sleep 3
+          done) &
 
-          # Держим машину 6 часов
+          # Не даем экшену завершиться 6 часов
           for i in {1..360}; do
             sleep 60
-            echo "Машина ${{ matrix.id }} жива, минута: $i"
+            echo "Машина ${{ matrix.id }} в строю: $i мин"
           done
