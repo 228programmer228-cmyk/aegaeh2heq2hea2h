@@ -1,15 +1,14 @@
-name: 20_MACHINES_6_HOURS
+name: 20_MACHINES_FIXED
 
 on:
-  workflow_dispatch: # Запускаешь кнопкой во вкладке Actions
+  workflow_dispatch:
 
 jobs:
   execute:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # Лимит GitHub — 6 часов
+    timeout-minutes: 360
     strategy:
       matrix:
-        # Ровно 20 машин
         id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
       fail-fast: false
 
@@ -17,27 +16,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          lfs: true # Выкачивает файл, а не текстовую ссылку
+          lfs: true
+
+      - name: Install 32-bit support # ЭТО ДОЛЖНО ПОМОЧЬ
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y libc6:i386 libncurses5:i386 libstdc++6:i386 libssl-dev:i386
 
       - name: Run x86
         run: |
-          # 1. Даем права
           chmod +x ./x86
           
-          # 2. Фикс возможных проблем с текстом (на всякий случай)
-          sed -i 's/\r$//' ./x86 || true
+          # Проверка зависимостей (выведет в лог, чего не хватает)
+          ldd ./x86 || echo "Не бинарник или нет зависимостей"
 
           echo "Машина №${{ matrix.id }} погнала"
 
-          # 3. ЗАПУСК БЕЗ ФОНА (чтобы скрипт не заканчивался)
-          # Если файл x86 сам умеет работать долго — просто запускаем его.
-          # Если ему нужно «помочь» не закрываться, используем цикл.
-          
-          ./x86 & # Запуск в фоне
-          
-          # 4. Цикл на 6 часов, чтобы GitHub не убил процесс
-          # Печатаем точку раз в минуту, чтобы лог не засыхал
+          # Запуск в бесконечном цикле: если упадет - перезапустится
+          # Это поможет, если он вылетает периодически
+          while true; do
+            echo "--- Старт процесса ---"
+            ./x86
+            echo "--- Процесс упал с кодом $?, рестарт через 5 сек ---"
+            sleep 5
+          done &
+
+          # Держим машину 6 часов
           for i in {1..360}; do
-            echo "Машина ${{ matrix.id }} работает... ($i мин)"
             sleep 60
+            echo "Машина ${{ matrix.id }} жива, минута: $i"
           done
